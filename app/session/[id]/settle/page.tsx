@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getIdentity } from "@/lib/identity";
+import { clearIdentity, getIdentity } from "@/lib/identity";
 import { formatRupee } from "@/lib/format";
 import { computeSettlement } from "@/lib/settlement";
 import {
   assignItem,
   deletePerson,
+  optOutPerson,
   reopenSession,
   setSessionStatus,
   splitUnclaimedItems,
@@ -16,6 +17,7 @@ import { useSessionLive } from "@/lib/useSessionLive";
 import {
   PrimaryButton,
   Screen,
+  BackButton,
   SecondaryButton,
   StatusText,
 } from "@/components/ui";
@@ -29,6 +31,7 @@ export default function SettlePage() {
   const [identity, setIdentityState] = useState<Identity | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmOptOut, setConfirmOptOut] = useState(false);
 
   useEffect(() => {
     setIdentityState(getIdentity(id));
@@ -53,7 +56,7 @@ export default function SettlePage() {
   const isHost = Boolean(identity?.isHost);
   const waiting = session.status === "open" && !isHost;
   const showResults = session.status === "calculating" || session.status === "settled";
-  const doneCount = people.filter((person) => person.votingDone).length;
+  const doneCount = people.filter((person) => person.isDoneVoting).length;
   const everyoneDone = people.length > 0 && doneCount === people.length;
   const currentPerson = identity
     ? result.breakdowns.find((person) => person.personId === identity.personId)
@@ -115,6 +118,18 @@ export default function SettlePage() {
     }
   }
 
+  async function optOut() {
+    if (!identity) return;
+    setBusy(true);
+    try {
+      await optOutPerson(id, identity.personId);
+      clearIdentity(id);
+      router.push(`/session/${id}/left`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function reallocateItem(itemId: string, personId: string) {
     if (!personId) return;
     setBusy(true);
@@ -125,9 +140,14 @@ export default function SettlePage() {
     }
   }
 
+  function goBack() {
+    if (session?.status === "open") router.push(`/session/${id}/vote`);
+  }
+
   if (waiting) {
     return (
       <Screen>
+        <BackButton onClick={goBack} />
         <StatusText>Waiting for the host to confirm everyone is in…</StatusText>
       </Screen>
     );
@@ -136,6 +156,7 @@ export default function SettlePage() {
   if (session.status === "draft") {
     return (
       <Screen>
+        <BackButton onClick={() => router.push(`/session/${id}/host`)} />
         <StatusText>This session is not open yet.</StatusText>
       </Screen>
     );
@@ -143,7 +164,14 @@ export default function SettlePage() {
 
   return (
     <Screen>
+      <BackButton onClick={goBack} disabled={session.status !== "open"} />
+      {session.status !== "open" ? (
+        <p className="-mt-3 mb-5 text-sm text-muted">Session already settled.</p>
+      ) : null}
       <h1 className="mb-1 text-xl font-semibold">{session.restaurantName}</h1>
+        <p className="mb-2 text-sm font-semibold text-accent">
+          Computed total: {formatRupee(result.billTotal)}
+        </p>
       <p className="mb-6 text-sm text-muted">
         {session.status === "open"
           ? "Review who has joined, then confirm the split."
@@ -218,6 +246,20 @@ export default function SettlePage() {
               ))}
             </ul>
           </section>
+          <ItemSplitDetails items={items} people={people} claims={claims} />
+          {isHost ? (
+            <section className="mt-8 rounded-lg border-2 border-accent bg-accent/5 p-4">
+              <div className="flex items-baseline justify-between gap-3">
+                <h2 className="text-base font-semibold">Total from everyone</h2>
+                <p className="text-xl font-semibold text-accent">
+                  {formatRupee(result.sumFinal)}
+                </p>
+              </div>
+              <p className="mt-1 text-xs text-muted">
+                Sum of all displayed participant amounts.
+              </p>
+            </section>
+          ) : null}
         </>
       ) : null}
 
@@ -257,6 +299,43 @@ export default function SettlePage() {
           )}
         </div>
       ) : null}
+
+      {identity ? (
+        <div className="mt-8 border-t border-line pt-6">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setConfirmOptOut((current) => !current)}
+            className="min-h-[42px] w-full text-sm text-red-700"
+          >
+            Opt out of this session
+          </button>
+          {confirmOptOut ? (
+            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
+              <p className="text-sm text-red-800">
+                Are you sure? This removes you from the split.
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={optOut}
+                  className="min-h-[42px] rounded-lg bg-red-700 px-3 text-sm font-medium text-white"
+                >
+                  Confirm
+                </button>
+                <SecondaryButton
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setConfirmOptOut(false)}
+                >
+                  Cancel
+                </SecondaryButton>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </Screen>
   );
 }
@@ -278,8 +357,9 @@ function PersonalBreakdown({ person }: { person: PersonBreakdown }) {
   return (
     <section className="rounded-lg border-2 border-accent bg-neutral-50 p-4">
       <div className="mb-4 flex items-baseline justify-between gap-3">
-        <h2 className="text-lg font-semibold">You pay</h2>
-        <p className="text-2xl font-semibold text-accent">{formatRupee(person.finalAmount)}</p>
+        <h2 className="text-lg font-semibold">
+          {person.name}, you pay {formatRupee(person.finalAmount)}
+        </h2>
       </div>
       <ul className="space-y-2 border-t border-line pt-3 text-sm">
         {person.itemShares.map((item) => (
@@ -297,6 +377,42 @@ function PersonalBreakdown({ person }: { person: PersonBreakdown }) {
             value={`${roundingAdjustment > 0 ? "+" : "−"}${formatRupee(Math.abs(roundingAdjustment))}`}
           />
         ) : null}
+      </ul>
+    </section>
+  );
+}
+
+function ItemSplitDetails({
+  items,
+  people,
+  claims,
+}: {
+  items: { id: string; name: string }[];
+  people: { id: string; name: string }[];
+  claims: { itemId: string; personId: string }[];
+}) {
+  return (
+    <section className="mt-8">
+      <h2 className="mb-3 text-sm font-medium text-muted">Items split by</h2>
+      <ul className="divide-y divide-line border-y border-line">
+        {items.map((item) => {
+          const names = Array.from(
+            new Set(
+              claims
+                .filter((claim) => claim.itemId === item.id)
+                .map((claim) => people.find((person) => person.id === claim.personId)?.name)
+                .filter((name): name is string => Boolean(name))
+            )
+          );
+          return (
+            <li key={item.id} className="py-3 text-sm">
+              <p className="font-medium">{item.name}</p>
+              <p className="mt-1 text-muted">
+                {names.length > 0 ? names.join(", ") : "Unallocated"}
+              </p>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

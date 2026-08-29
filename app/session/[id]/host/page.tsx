@@ -14,11 +14,13 @@ import {
 import { db, auth } from "@/lib/firebase";
 import { getIdentity } from "@/lib/identity";
 import { fileToBase64Image } from "@/lib/image";
-import { parseNumber } from "@/lib/format";
+import { formatRupee, parseNumber } from "@/lib/format";
+import { computeBillTotal, itemTotal } from "@/lib/settlement";
 import { useSessionLive } from "@/lib/useSessionLive";
 import { deleteItemAndClaims, deleteSession } from "@/lib/sessionWrites";
 import {
   Field,
+  BackButton,
   PrimaryButton,
   Screen,
   SecondaryButton,
@@ -48,7 +50,6 @@ export default function HostSetupPage() {
   const [tax, setTax] = useState("");
   const [service, setService] = useState("");
   const [discount, setDiscount] = useState("");
-  const [billTotal, setBillTotal] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -70,7 +71,6 @@ export default function HostSetupPage() {
       session.serviceChargeAmount ? String(session.serviceChargeAmount) : ""
     );
     setDiscount(session.discountAmount ? String(session.discountAmount) : "");
-    setBillTotal(session.billTotal ? String(session.billTotal) : "");
     setHydrated(true);
   }, [session, hydrated]);
 
@@ -95,6 +95,19 @@ export default function HostSetupPage() {
     router.replace(`/session/${id}/join`);
     return <Screen><StatusText>Opening session…</StatusText></Screen>;
   }
+
+  function goBack() {
+    if (items.length > 0 && !window.confirm("Discard this session setup?")) return;
+    router.push("/");
+  }
+
+  const computedItemsTotal = items.reduce((sum, item) => sum + itemTotal(item), 0);
+  const computedTotal = computeBillTotal(
+    items,
+    parseNumber(tax),
+    parseNumber(service),
+    parseNumber(discount)
+  );
 
   async function addItem(e: FormEvent) {
     e.preventDefault();
@@ -168,7 +181,6 @@ export default function HostSetupPage() {
       setTax(data.tax ? String(data.tax) : "");
       setService(data.serviceCharge ? String(data.serviceCharge) : "");
       setDiscount(data.discount ? String(data.discount) : "");
-      setBillTotal(data.total ? String(data.total) : "");
     } catch (err) {
       setError(
         err instanceof Error && err.message
@@ -193,7 +205,7 @@ export default function HostSetupPage() {
         taxAmount: parseNumber(tax),
         serviceChargeAmount: parseNumber(service),
         discountAmount: parseNumber(discount),
-        billTotal: parseNumber(billTotal),
+        billTotal: computeBillTotal(items, parseNumber(tax), parseNumber(service), parseNumber(discount)),
         status: "open",
         updatedAt: serverTimestamp(),
       });
@@ -206,7 +218,11 @@ export default function HostSetupPage() {
 
   return (
     <Screen>
+      <BackButton onClick={goBack} />
       <h1 className="mb-1 text-xl font-semibold">{session.restaurantName}</h1>
+      <p className="mb-6 inline-flex rounded-full bg-accent/10 px-3 py-1 text-sm font-medium text-accent">
+        You&apos;re the host
+      </p>
       <p className="mb-6 text-sm text-muted">Add the bill, then open voting.</p>
 
       <div className="space-y-3">
@@ -324,7 +340,7 @@ export default function HostSetupPage() {
         )}
       </ul>
 
-      <div className="mt-6 space-y-3">
+      <div className="mt-6 space-y-3 pb-32">
         <Field
           label="Tax amount (₹)"
           inputMode="decimal"
@@ -343,12 +359,6 @@ export default function HostSetupPage() {
           value={discount}
           onChange={(e) => setDiscount(e.target.value)}
         />
-        <Field
-          label="Bill total (₹)"
-          inputMode="decimal"
-          value={billTotal}
-          onChange={(e) => setBillTotal(e.target.value)}
-        />
       </div>
 
       {error ? <p className="mt-3 text-sm text-red-700">{error}</p> : null}
@@ -360,6 +370,20 @@ export default function HostSetupPage() {
         <button type="button" disabled={busy} onClick={removeSession} className="min-h-[42px] w-full text-sm text-red-700">
           Delete session
         </button>
+      </div>
+      <div className="fixed bottom-0 left-0 right-0 z-10 border-t border-accent/20 bg-white/95 px-4 py-3 shadow-[0_-2px_8px_rgba(0,0,0,0.08)] backdrop-blur">
+        <div className="mx-auto max-w-md">
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="text-sm font-medium text-muted">Total</p>
+            <p className="text-2xl font-bold text-accent">{formatRupee(computedTotal)}</p>
+          </div>
+          <p className="mt-1 truncate text-xs text-muted">
+            Items: {formatRupee(computedItemsTotal)} + Tax: {formatRupee(parseNumber(tax))} + Service: {formatRupee(parseNumber(service))} - Discount: {formatRupee(parseNumber(discount))}
+          </p>
+          <p className="mt-1 truncate text-[11px] text-muted">
+            Check this matches your printed bill before opening for voting.
+          </p>
+        </div>
       </div>
     </Screen>
   );

@@ -6,6 +6,14 @@ The app does not require Google login and does not process payments. It uses Fir
 
 ## Features
 
+### Explicit navigation
+
+- Host setup has a top-left back control to return to the landing page. If items have been added, it asks before discarding the setup.
+- The join screen returns a host to host setup only while the session is still a draft. Guests return to the landing page.
+- Voting back navigation requires inline confirmation and removes the current participant and claims before returning to the landing page.
+- Settlement can return to voting only while the session is open. Once calculation has started, the back control is disabled and the screen explains that the session is already settled.
+- Navigation uses explicit routes rather than browser history, so redirects cannot send users through stale intermediate states.
+
 ### Anonymous sessions
 
 - No Google account or traditional sign-up is required.
@@ -29,10 +37,17 @@ The app does not require Google login and does not process payments. It uses Fir
 
 - Participants see the current number of people in the session.
 - Each item has an inline circular check control in the same row as its name and price.
+- The entire item card is tappable, including the name, price, and claimant avatars.
+- Selected cards use an accent border and light tint for fast scanning at a table.
 - Selecting an item adds the participant to that item's split.
 - Selecting again removes the participant.
 - The item list updates live through Firestore listeners.
 - Running personal totals are intentionally hidden during selection because the participant list may still change.
+- A live `You've selected:` summary below the item list shows only this participant's selected item names and current share amounts.
+- Voting presence is refreshed every five seconds while the page is open.
+- A confirmed tab close or navigation removes a guest and their claims; backgrounded mobile tabs receive a ten-second grace period first.
+- The host periodically removes guests whose heartbeat has been stale for more than the grace period, covering abrupt browser termination where the departing tab cannot finish an async delete.
+- Claims use one deterministic document per participant/item and direct Firestore writes, so rapid taps cannot create duplicate claims; the collection listener remains the source of truth for every connected screen.
 - The page shows how many joined people have finished voting.
 - Each participant can click `I am done voting` to lock their selections.
 - A participant can click `Edit my votes` to unlock their selections and change them.
@@ -60,6 +75,8 @@ On the calculation page the creator can:
 - Return to editing and recalculate. Reopening clears old claims so the next calculation starts cleanly.
 - Delete the entire session from the setup page.
 
+Every participant, including the creator, can also choose **Opt out of this session**. The action requires an inline confirmation, removes that person's participant record and claims, and redirects them to a simple confirmation page. If the session is already settled, items that become unclaimed because of the opt-out are equally redistributed among the remaining claimants before the next live settlement calculation. This does not cancel the session for anyone else.
+
 The participant count on the voting page is a link for the creator to review the participant list before confirmation. Other participants cannot access host controls.
 
 ### Settlement math
@@ -86,7 +103,9 @@ The calculation distributes:
 
 The code logs a warning when the leftover exceeds five rupees. That indicates a bill/claim mismatch rather than normal rounding.
 
-The settlement screen shows the current participant's personalized `You pay` amount first. It then lists every claimed item, its split count and share, tax, service charge, discount, and any rounding adjustment needed for the displayed lines to reconcile. A separate list shows what everyone else owes.
+The settlement screen shows the current participant's personalized `You pay` amount first. It then lists every claimed item, its split count and share, tax, service charge, discount, and any rounding adjustment needed for the displayed lines to reconcile. A separate list shows what everyone else owes. It also displays the computed total for the bill.
+
+The results include an `Items split by` section showing each item followed by the names of all participants who claimed it. The host additionally sees `Total from everyone`, which is the sum of all displayed participant amounts and should match the computed bill total.
 
 The worked verification scenario produces:
 
@@ -195,6 +214,8 @@ sessions/{sessionId}/people/{personId}
   joinedAt
   isHost
   authUid
+  isDoneVoting
+  lastSeen
 
 sessions/{sessionId}/items/{itemId}
   name
@@ -207,7 +228,7 @@ sessions/{sessionId}/claims/{claimId}
   shareFraction
 ```
 
-The browser keeps the session-specific person ID in local storage so refreshes in the same browser preserve the participant. Firestore remains the source of truth for the session, participant, item, claim, and host UID records.
+The browser keeps the session-specific person ID in tab-scoped session storage so a refresh in the same tab preserves the participant while a different tab starts fresh. The join form never reads a prior participant name. The `Not you? Join as someone else` action clears the current tab's identity and reveals a blank form. Legacy local-storage entries are ignored and removed. Firestore remains the source of truth for the session, participant, item, claim, and host UID records.
 
 ## Security model
 

@@ -7,6 +7,24 @@ export type PersonItemShare = {
   amount: number;
 };
 
+export function itemTotal(item: Pick<Item, "price" | "quantity">) {
+  const quantity = item.quantity == null ? 1 : nonnegative(item.quantity);
+  return nonnegative(item.price) * quantity;
+}
+
+export function computeBillTotal(
+  items: Item[],
+  taxAmount: number,
+  serviceChargeAmount: number,
+  discountAmount: number
+) {
+  const itemsTotal = items.reduce((sum, item) => sum + itemTotal(item), 0);
+  return Math.max(
+    0,
+    itemsTotal + nonnegative(taxAmount) + nonnegative(serviceChargeAmount) - nonnegative(discountAmount)
+  );
+}
+
 function nonnegative(value: number) {
   return Number.isFinite(value) && value >= 0 ? value : 0;
 }
@@ -60,7 +78,7 @@ export function computeSettlement(
   for (const item of items) {
     const itemClaims = claimsForItem(workingClaims, item.id);
     if (itemClaims.length === 0) continue;
-    const amount = nonnegative(item.price) / itemClaims.length;
+    const amount = itemTotal(item) / itemClaims.length;
     for (const claim of itemClaims) {
       const shares = sharesByPerson.get(claim.personId) ?? [];
       shares.push({ itemId: item.id, itemName: item.name, ways: itemClaims.length, amount });
@@ -70,7 +88,7 @@ export function computeSettlement(
   }
 
   const unclaimedItems = items.filter((item) => claimsForItem(workingClaims, item.id).length === 0);
-  const unclaimedTotal = unclaimedItems.reduce((sum, item) => sum + nonnegative(item.price), 0);
+  const unclaimedTotal = unclaimedItems.reduce((sum, item) => sum + itemTotal(item), 0);
   const allSubtotals = Array.from(subtotalByPerson.values()).reduce((sum, value) => sum + value, 0);
   const tax = nonnegative(session.taxAmount);
   const service = nonnegative(session.serviceChargeAmount);
@@ -96,7 +114,7 @@ export function computeSettlement(
   });
 
   const sumRounded = breakdowns.reduce((sum, person) => sum + person.finalAmount, 0);
-  const billTotal = nonnegative(session.billTotal);
+  const billTotal = computeBillTotal(items, tax, service, discount);
   const leftover = billTotal - sumRounded;
   if (Math.abs(leftover) > 5) console.warn("Settlement leftover exceeds normal rounding tolerance", { leftover, billTotal, sumRounded });
 

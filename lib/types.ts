@@ -29,7 +29,8 @@ export type PersonDoc = {
   joinedAt: unknown;
   isHost: boolean;
   authUid?: string;
-  votingDone?: boolean;
+  isDoneVoting?: boolean;
+  lastSeen?: unknown;
 };
 
 export type ClaimDoc = {

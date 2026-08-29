@@ -5,10 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db, ensureAnonymousAuth } from "@/lib/firebase";
-import { getIdentity, setIdentity, type Identity } from "@/lib/identity";
+import { clearIdentity, getIdentity, setIdentity, type Identity } from "@/lib/identity";
 import { useSessionLive } from "@/lib/useSessionLive";
 import {
   Field,
+  BackButton,
   PrimaryButton,
   Screen,
   SecondaryButton,
@@ -30,15 +31,19 @@ export default function JoinPage() {
   useEffect(() => {
     setOrigin(window.location.origin);
     const identity = getIdentity(id);
-    if (identity && !identity.isHost) {
-      router.replace(`/session/${id}/vote`);
-      return;
-    }
     setMe(identity);
     setReady(true);
   }, [id, router]);
 
   const voteUrl = origin ? `${origin}/session/${id}/vote` : "";
+
+  function goBack() {
+    if (me?.isHost && session?.status === "draft") {
+      router.push(`/session/${id}/host`);
+    } else {
+      router.push("/");
+    }
+  }
 
   if (loading || !ready) {
     return <Screen><StatusText>Loading session…</StatusText></Screen>;
@@ -55,6 +60,7 @@ export default function JoinPage() {
   if (session.status === "draft") {
     return (
       <Screen>
+        <BackButton onClick={goBack} />
         <StatusText>Waiting for the host to open this session…</StatusText>
       </Screen>
     );
@@ -84,7 +90,8 @@ export default function JoinPage() {
         joinedAt: serverTimestamp(),
         isHost: false,
         authUid: user.uid,
-        votingDone: false,
+        isDoneVoting: false,
+        lastSeen: new Date(),
       });
       setIdentity(id, {
         personId: personRef.id,
@@ -100,6 +107,7 @@ export default function JoinPage() {
 
   return (
     <Screen>
+      <BackButton onClick={goBack} />
       <h1 className="mb-1 text-xl font-semibold">{session.restaurantName}</h1>
       <p className="mb-6 text-sm text-muted">Scan or share the link to join.</p>
 
@@ -116,19 +124,35 @@ export default function JoinPage() {
         </SecondaryButton>
       </div>
 
-      {me?.isHost ? (
+      {me ? (
         <div className="mt-8">
           <PrimaryButton
             type="button"
             onClick={() => router.push(`/session/${id}/vote`)}
           >
-            Continue to voting
+            Continue as {me.name}
           </PrimaryButton>
+          {!me.isHost ? (
+            <button
+              type="button"
+              className="mt-3 min-h-[42px] w-full text-sm text-accent"
+              onClick={() => {
+                clearIdentity(id);
+                setMe(null);
+                setName("");
+                setError("");
+              }}
+            >
+              Not you? Join as someone else
+            </button>
+          ) : null}
         </div>
       ) : (
         <form onSubmit={join} className="mt-8 space-y-3">
           <Field
             label="Your name"
+            name="session-person-name"
+            autoComplete="off"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />

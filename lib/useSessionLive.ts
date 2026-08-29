@@ -74,18 +74,23 @@ export function useSessionLive(sessionId: string) {
           joinedAt: d.data().joinedAt,
           isHost: Boolean(d.data().isHost),
           authUid: d.data().authUid ? String(d.data().authUid) : undefined,
-          votingDone: Boolean(d.data().votingDone),
+          isDoneVoting: Boolean(d.data().isDoneVoting),
+          lastSeen: d.data().lastSeen,
         })));
       });
 
-      const unsubClaims = onSnapshot(collection(db, "sessions", sessionId, "claims"), (snap) => {
-        setClaims(snap.docs.map((d) => ({
-          id: d.id,
-          itemId: String(d.data().itemId ?? ""),
-          personId: String(d.data().personId ?? ""),
-          shareFraction: num(d.data().shareFraction, 1),
-        })));
-      });
+      const unsubClaims = onSnapshot(
+        collection(db, "sessions", sessionId, "claims"),
+        (snap) => {
+          setClaims(snap.docs.map((d) => ({
+            id: d.id,
+            itemId: String(d.data().itemId ?? ""),
+            personId: String(d.data().personId ?? ""),
+            shareFraction: num(d.data().shareFraction, 1),
+          })));
+        },
+        () => setClaims([])
+      );
 
       unsubscribe = () => {
         unsubSession();

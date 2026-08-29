@@ -6,6 +6,27 @@ export function Screen({ children }: { children: React.ReactNode }) {
   );
 }
 
+export function BackButton({
+  onClick,
+  disabled = false,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label="Back"
+      disabled={disabled}
+      onClick={onClick}
+      className="mb-5 inline-flex min-h-[42px] items-center gap-2 text-sm text-muted disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <span aria-hidden="true" className="text-xl leading-none">←</span>
+      <span>Back</span>
+    </button>
+  );
+}
+
 export function Label({ children }: { children: React.ReactNode }) {
   return (
     <label className="mb-1 block text-sm text-muted">{children}</label>

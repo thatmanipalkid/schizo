@@ -41,7 +41,8 @@ export default function HomePage() {
           joinedAt: serverTimestamp(),
           isHost: true,
           authUid: user.uid,
-          votingDone: false,
+          isDoneVoting: false,
+          lastSeen: new Date(),
         }
       );
 

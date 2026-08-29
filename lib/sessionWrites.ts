@@ -4,19 +4,26 @@ import {
   doc,
   getDocs,
   query,
+  setDoc,
   updateDoc,
   where,
   writeBatch,
 } from "firebase/firestore";
 import { db } from "./firebase";
 
+export async function updatePresence(sessionId: string, personId: string) {
+  await updateDoc(doc(db, "sessions", sessionId, "people", personId), {
+    lastSeen: new Date(),
+  });
+}
+
 export async function setVotingDone(
   sessionId: string,
   personId: string,
-  votingDone: boolean
+  isDoneVoting: boolean
 ) {
   await updateDoc(doc(db, "sessions", sessionId, "people", personId), {
-    votingDone,
+    isDoneVoting,
   });
 }
 
@@ -26,22 +33,18 @@ export async function toggleClaim(
   personId: string,
   existingClaimId?: string
 ) {
-  const claimsRef = collection(db, "sessions", sessionId, "claims");
+  const claimRef = doc(
+    db,
+    "sessions",
+    sessionId,
+    "claims",
+    `${personId}_${itemId}`
+  );
   if (existingClaimId) {
     await deleteDoc(doc(db, "sessions", sessionId, "claims", existingClaimId));
   } else {
-    await addClaim(claimsRef, itemId, personId);
+    await setDoc(claimRef, { itemId, personId, shareFraction: 1 });
   }
-}
-
-async function addClaim(
-  claimsRef: ReturnType<typeof collection>,
-  itemId: string,
-  personId: string
-) {
-  await writeBatch(db)
-    .set(doc(claimsRef), { itemId, personId, shareFraction: 1 })
-    .commit();
 }
 
 export async function splitUnclaimedItems(
@@ -92,6 +95,63 @@ export async function deletePerson(sessionId: string, personId: string) {
   claims.docs.forEach((claim) => batch.delete(claim.ref));
   batch.delete(doc(db, "sessions", sessionId, "people", personId));
   await batch.commit();
+}
+
+export async function optOutPerson(sessionId: string, personId: string) {
+  const items = await getDocs(collection(db, "sessions", sessionId, "items"));
+  const people = await getDocs(collection(db, "sessions", sessionId, "people"));
+  const claims = await getDocs(collection(db, "sessions", sessionId, "claims"));
+  const remainingClaims = claims.docs.filter(
+    (claim) => claim.data().personId !== personId
+  );
+  const remainingClaimants = new Set(
+    remainingClaims.map((claim) => String(claim.data().personId))
+  );
+  const claimantIds = Array.from(remainingClaimants);
+  const batch = writeBatch(db);
+
+  claims.docs
+    .filter((claim) => claim.data().personId === personId)
+    .forEach((claim) => batch.delete(claim.ref));
+  batch.delete(doc(db, "sessions", sessionId, "people", personId));
+
+  if (claimantIds.length > 0) {
+    for (const item of items.docs) {
+      const hasClaim = remainingClaims.some(
+        (claim) => claim.data().itemId === item.id
+      );
+      if (hasClaim) continue;
+      const fraction = 1 / claimantIds.length;
+      for (const claimantId of claimantIds) {
+        batch.set(doc(collection(db, "sessions", sessionId, "claims")), {
+          itemId: item.id,
+          personId: claimantId,
+          shareFraction: fraction,
+        });
+      }
+    }
+  }
+  await batch.commit();
+}
+
+export async function removeInactiveParticipants(
+  sessionId: string,
+  gracePeriodMs = 12000
+) {
+  const people = await getDocs(collection(db, "sessions", sessionId, "people"));
+  const cutoff = Date.now() - gracePeriodMs;
+  const inactiveIds = people.docs
+    .filter((person) => {
+      if (person.data().isHost || !person.data().lastSeen) return false;
+      const lastSeen = person.data().lastSeen;
+      const timestamp = typeof lastSeen.toMillis === "function"
+        ? lastSeen.toMillis()
+        : new Date(lastSeen).getTime();
+      return Number.isFinite(timestamp) && timestamp < cutoff;
+    })
+    .map((person) => person.id);
+
+  await Promise.all(inactiveIds.map((personId) => deletePerson(sessionId, personId)));
 }
 
 export async function deleteItemAndClaims(sessionId: string, itemId: string) {
