@@ -1,0 +1,229 @@
+# thatmanipalkid
+
+`thatmanipalkid` is a lightweight, link-based restaurant bill splitter. A creator uploads or enters a bill, shares one session link, and each participant selects the items they had. The creator confirms the participant list, then everyone sees the same calculated split.
+
+The app does not require Google login and does not process payments. It uses Firebase Anonymous Authentication only to give each browser a backend identity that Firestore rules can verify.
+
+## Features
+
+### Anonymous sessions
+
+- No Google account or traditional sign-up is required.
+- The creator enters their name and a restaurant/session name on the landing page.
+- Participants enter a display name through the shared session link.
+- The product name, `thatmanipalkid`, is visible on the landing page.
+- Creator and participant names are stored in Firestore in the session's `people` collection.
+- Firebase Anonymous Auth supplies the backend UID used to protect session ownership.
+
+### Bill entry
+
+- The creator can upload a bill image.
+- The server sends the image to Anthropic for extraction.
+- Extracted line items, prices, quantities, tax, service charge, discount, and total are written to Firestore together.
+- The creator can also add, edit, and delete items manually.
+- Quantity is optional. If omitted, the item remains valid and is treated as one item for splitting.
+- Deleting an item also deletes every claim attached to that item.
+- Parsing errors are shown in the setup page instead of silently failing.
+
+### Live item selection
+
+- Participants see the current number of people in the session.
+- Each item has an inline circular check control in the same row as its name and price.
+- Selecting an item adds the participant to that item's split.
+- Selecting again removes the participant.
+- The item list updates live through Firestore listeners.
+- Running personal totals are intentionally hidden during selection because the participant list may still change.
+
+### Host confirmation and calculation
+
+Sessions use these states:
+
+| State | Meaning |
+| --- | --- |
+| `draft` | The creator is entering or editing the bill. Participants cannot join yet. |
+| `open` | Participants may join and select items. |
+| `calculating` | The creator confirmed the participant list. All users are sent to the calculation view. New users cannot join. |
+| `settled` | Reserved for a future finalization step. Results remain visible. |
+| `expired` | A draft or open session passed its expiry time. |
+| `cancelled` | The creator cancelled the session. |
+
+On the calculation page the creator can:
+
+- See the names of everyone who joined.
+- Remove a participant. Their claims are deleted at the same time.
+- Assign an unallocated item to a specific participant.
+- Split all unallocated items equally among existing claimants.
+- Return to editing and recalculate. Reopening clears old claims so the next calculation starts cleanly.
+- Delete the entire session from the setup page.
+
+The participant count on the voting page is a link for the creator to review the participant list before confirmation. Other participants cannot access host controls.
+
+### Settlement math
+
+The calculation distributes:
+
+- Item subtotals according to each item's claim fractions.
+- Tax proportionally to claimed item subtotals.
+- Service charge proportionally to claimed item subtotals.
+- Discount proportionally to claimed item subtotals.
+- Rounding adjustments to keep the displayed final amounts aligned with the entered bill total.
+
+No payment request, UPI deep link, payment gateway, or payment confirmation is part of the app.
+
+## Local development
+
+Requirements:
+
+- Node.js 18 or newer
+- A Firebase project with Firestore
+- Firebase Anonymous Authentication enabled
+- An Anthropic API key for bill image parsing
+
+Install and run:
+
+```bash
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000` unless that port is already in use.
+
+Build verification:
+
+```bash
+npm run build
+```
+
+## Environment variables
+
+Create `.env.local` in the project root. Never commit this file.
+
+```env
+NEXT_PUBLIC_FIREBASE_API_KEY=...
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=...
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=...
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=...
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
+NEXT_PUBLIC_FIREBASE_APP_ID=...
+ANTHROPIC_API_KEY=...
+# Optional; defaults to claude-sonnet-4-20250514
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
+```
+
+`ANTHROPIC_API_KEY` is server-only. Do not rename it with a `NEXT_PUBLIC_` prefix.
+
+## Firebase setup
+
+1. Create or select a Firebase project.
+2. Create a Firestore database.
+3. Enable **Authentication > Sign-in method > Anonymous**.
+4. Register a web app and copy its configuration into `.env.local`.
+5. Deploy the rules in `firestore.rules`.
+
+With the Firebase CLI:
+
+```bash
+npm install -g firebase-tools
+firebase login
+firebase use YOUR_FIREBASE_PROJECT_ID
+firebase deploy --only firestore:rules
+```
+
+The app calls `signInAnonymously` automatically before it subscribes to session data. No Google provider is needed.
+
+## Vercel deployment
+
+The Vercel CLI does not need to be installed globally:
+
+```bash
+npx vercel@latest login
+npx vercel@latest --prod
+```
+
+Choose Next.js and the project root when prompted. In Vercel project settings, add all Firebase variables and `ANTHROPIC_API_KEY` for the Production environment. Redeploy after adding or changing variables.
+
+The bill parser is deployed automatically as the Next.js route `/api/parse-bill`.
+
+## Data model
+
+```text
+sessions/{sessionId}
+  restaurantName
+  createdAt
+  expiresAt
+  status
+  hostUid
+  taxAmount
+  serviceChargeAmount
+  discountAmount
+  billTotal
+
+sessions/{sessionId}/people/{personId}
+  name
+  joinedAt
+  isHost
+  authUid
+
+sessions/{sessionId}/items/{itemId}
+  name
+  price
+  quantity             optional
+
+sessions/{sessionId}/claims/{claimId}
+  itemId
+  personId
+  shareFraction
+```
+
+The browser keeps the session-specific person ID in local storage so refreshes in the same browser preserve the participant. Firestore remains the source of truth for the session, participant, item, claim, and host UID records.
+
+## Security model
+
+Firebase Anonymous Auth is deliberately used instead of Google login. The Firestore rules then enforce:
+
+- Only an authenticated UID can read session data.
+- Only the UID in `sessions/{sessionId}.hostUid` can edit or delete the session and its items.
+- Participants can create a person record using their own authenticated UID while the session is open.
+- Participants can modify only their own claims.
+- The host can remove people and clean up their claims.
+
+This is stronger than trusting an `isHost` flag in local storage. It still is not the same as a permanent account system: clearing browser storage or changing devices creates a new anonymous identity.
+
+## Expiry behavior
+
+New sessions receive a two-hour `expiresAt` timestamp. The shared session hook derives `expired` for draft and open sessions once the timestamp has passed. Expired sessions are read-only from the UI and cannot be joined.
+
+Expiry is currently lazy: there is no scheduled backend job deleting expired documents. This avoids deleting data unexpectedly and keeps the setup simple. A scheduled Cloud Function can be added later if automatic cleanup is required.
+
+## Important migration note
+
+Sessions created before `hostUid`, `expiresAt`, and `authUid` were added do not have the new identity fields. After deploying the stricter Firestore rules, those old sessions may no longer be usable. Finish or manually migrate old sessions before applying the rules in production, or temporarily keep a migration-only rule while backfilling the fields.
+
+## Known edge cases and current behavior
+
+- Two users can toggle the same item at nearly the same time. Each toggle is an independent claim-document write, and the calculation derives equal shares from the live claimant count, avoiding cross-user claim updates. A future transaction or callable backend function could make duplicate toggles and conflict handling fully atomic.
+- An item with no claimant appears as unallocated on the calculation page and must be assigned or split by the host.
+- If every item is unclaimed, there are no claimants to receive an equal split.
+- Rounding can produce small differences; the settlement code assigns the remainder to the largest claimant.
+- Invalid OCR prices are converted to zero and should be reviewed by the creator.
+- Anthropic failures can come from missing keys, exhausted credits, unsupported models, rate limits, network errors, or malformed model JSON.
+- Bill images are compressed in the browser before upload. Very large, blurry, rotated, or low-contrast receipts may still parse incorrectly.
+- Duplicate display names are allowed. Person IDs, not names, identify claims.
+- A browser refresh preserves identity only while its local storage remains intact.
+- Anonymous auth persistence and Firestore listeners require browser storage and network access.
+- The current client-side batch deletion helper is suitable for normal sessions but should be chunked if a session grows beyond Firestore's batch write limit.
+- A user who has already joined can keep an old voting tab open, but the shared status listener redirects them once calculation begins.
+- A session link can be forwarded to anyone. The host should delete or cancel a session if the link is shared accidentally.
+- The Firestore rules protect authenticated ownership, but a user with access to a session can still read participant names and bill data by design.
+- There is no permanent account recovery, cross-device participant identity, audit log, or invitation list.
+
+## Suggested future improvements
+
+1. Move claim updates and settlement finalization into trusted server-side callable functions or transactions.
+2. Add a scheduled cleanup job for expired sessions.
+3. Validate OCR output with a schema and require creator review before opening voting.
+4. Add an explicit finalization state after the host finishes reallocating items.
+5. Chunk large recursive deletes and add a server-side delete function.
+6. Add a short host-only session token or permanent authentication if stronger identity is needed.
+7. Add automated tests for settlement rounding, concurrent claims, expiry, and participant removal.
+8. Add Firebase Emulator Suite tests for the Firestore rules.

@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /sessions/{sessionId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.hostUid == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.hostUid == request.auth.uid;
+
+      match /people/{personId} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && request.resource.data.authUid == request.auth.uid
+          && (get(/databases/$(database)/documents/sessions/$(sessionId)).data.status == "open"
+            || get(/databases/$(database)/documents/sessions/$(sessionId)).data.hostUid == request.auth.uid);
+        allow update, delete: if signedIn()
+          && (resource.data.authUid == request.auth.uid
+            || get(/databases/$(database)/documents/sessions/$(sessionId)).data.hostUid == request.auth.uid);
+      }
+
+      match /items/{itemId} {
+        allow read: if signedIn();
+        allow write: if isHost(sessionId);
+      }
+
+      match /claims/{claimId} {
+        allow read: if signedIn();
+        allow create, update: if signedIn()
+          && (isHost(sessionId) || personBelongsToUser(sessionId, request.resource.data.personId));
+        allow delete: if signedIn()
+          && (isHost(sessionId) || personBelongsToUser(sessionId, resource.data.personId));
+      }
+    }
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isHost(sessionId) {
+      return signedIn()
+        && get(/databases/$(database)/documents/sessions/$(sessionId)).data.hostUid == request.auth.uid;
+    }
+
+    function personBelongsToUser(sessionId, personId) {
+      return signedIn()
+        && get(/databases/$(database)/documents/sessions/$(sessionId)/people/$(personId)).data.authUid == request.auth.uid;
+    }
+  }
+}
