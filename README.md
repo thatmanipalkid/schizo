@@ -33,6 +33,10 @@ The app does not require Google login and does not process payments. It uses Fir
 - Selecting again removes the participant.
 - The item list updates live through Firestore listeners.
 - Running personal totals are intentionally hidden during selection because the participant list may still change.
+- The page shows how many joined people have finished voting.
+- Each participant can click `I am done voting` to lock their selections.
+- A participant can click `Edit my votes` to unlock their selections and change them.
+- The host cannot proceed to calculation until every joined person, including the creator, is marked done.
 
 ### Host confirmation and calculation
 
@@ -60,6 +64,18 @@ The participant count on the voting page is a link for the creator to review the
 
 ### Settlement math
 
+The calculation follows a simple per-item model:
+
+1. For every item, count its unique claimants as `n`.
+2. Give every claimant exactly `item price / n` for that item.
+3. Sum those item shares for each person.
+4. Calculate each person's proportion from their item subtotal divided by the sum of all item subtotals.
+5. Apply tax, service charge, and discount using that proportion.
+6. Calculate `item subtotal + tax share + service share - discount share`.
+7. Clamp invalid or negative intermediate values so a displayed final amount can never be negative.
+8. Round each final amount to the nearest whole rupee.
+9. Apply the bill-total leftover as one adjustment to only the person with the largest amount, provided that adjustment does not make them negative.
+
 The calculation distributes:
 
 - Item subtotals according to each item's claim fractions.
@@ -67,6 +83,22 @@ The calculation distributes:
 - Service charge proportionally to claimed item subtotals.
 - Discount proportionally to claimed item subtotals.
 - Rounding adjustments to keep the displayed final amounts aligned with the entered bill total.
+
+The code logs a warning when the leftover exceeds five rupees. That indicates a bill/claim mismatch rather than normal rounding.
+
+The settlement screen shows the current participant's personalized `You pay` amount first. It then lists every claimed item, its split count and share, tax, service charge, discount, and any rounding adjustment needed for the displayed lines to reconcile. A separate list shows what everyone else owes.
+
+The worked verification scenario produces:
+
+```text
+Person A: ₹299
+Person B: ₹299
+Person C: ₹379
+Person D: ₹81
+Total: ₹1058
+```
+
+All four amounts are positive and the total matches the bill total exactly.
 
 No payment request, UPI deep link, payment gateway, or payment confirmation is part of the app.
 

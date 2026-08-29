@@ -9,7 +9,16 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { auth } from "./firebase";
+
+export async function setVotingDone(
+  sessionId: string,
+  personId: string,
+  votingDone: boolean
+) {
+  await updateDoc(doc(db, "sessions", sessionId, "people", personId), {
+    votingDone,
+  });
+}
 
 export async function toggleClaim(
   sessionId: string,

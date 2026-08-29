@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { getIdentity } from "@/lib/identity";
 import { initials, formatRupee } from "@/lib/format";
-import { toggleClaim } from "@/lib/sessionWrites";
+import { setVotingDone, toggleClaim } from "@/lib/sessionWrites";
 import { useSessionLive } from "@/lib/useSessionLive";
 import { Screen, StatusText } from "@/components/ui";
 import type { Identity } from "@/lib/identity";
@@ -17,6 +17,7 @@ export default function VotePage() {
   const [identity, setIdentityState] = useState<Identity | null>(null);
   const [checked, setChecked] = useState(false);
   const [pendingItem, setPendingItem] = useState<string | null>(null);
+  const [pendingDone, setPendingDone] = useState(false);
 
   useEffect(() => {
     const me = getIdentity(id);
@@ -55,8 +56,12 @@ export default function VotePage() {
     return <Screen><StatusText>Joining…</StatusText></Screen>;
   }
 
+  const me = people.find((person) => person.id === identity.personId);
+  const doneCount = people.filter((person) => person.votingDone).length;
+
   async function onToggle(itemId: string) {
-    if (!identity || !session || session.status === "settled") return;
+    const me = identity && people.find((person) => person.id === identity.personId);
+    if (!identity || !session || session.status === "settled" || me?.votingDone) return;
     const existing = claims.find(
       (c) => c.itemId === itemId && c.personId === identity.personId
     );
@@ -65,6 +70,18 @@ export default function VotePage() {
       await toggleClaim(id, itemId, identity.personId, existing?.id);
     } finally {
       setPendingItem(null);
+    }
+  }
+
+  async function onDone() {
+    if (!identity) return;
+    const me = people.find((person) => person.id === identity.personId);
+    if (!me) return;
+    setPendingDone(true);
+    try {
+      await setVotingDone(id, me.id, !me.votingDone);
+    } finally {
+      setPendingDone(false);
     }
   }
 
@@ -77,6 +94,7 @@ export default function VotePage() {
             <p className="text-sm text-muted">
               {people.length} {people.length === 1 ? "person" : "people"} joined
             </p>
+            <p className="text-sm text-muted">{doneCount} of {people.length} done voting</p>
           </div>
           {identity.isHost ? (
             <Link
@@ -106,7 +124,7 @@ export default function VotePage() {
                   <button
                     type="button"
                     aria-label={claimedByMe ? `Remove ${item.name}` : `Select ${item.name}`}
-                    disabled={pendingItem === item.id}
+                    disabled={pendingItem === item.id || Boolean(me?.votingDone)}
                     onClick={() => onToggle(item.id)}
                     className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-sm font-semibold ${
                       claimedByMe
@@ -144,6 +162,16 @@ export default function VotePage() {
             );
           })}
         </ul>
+        <button
+          type="button"
+          disabled={pendingDone}
+          onClick={onDone}
+          className={`mt-6 min-h-[42px] w-full rounded-lg px-4 text-sm font-medium ${
+            me?.votingDone ? "border border-accent bg-white text-accent" : "bg-accent text-white"
+          }`}
+        >
+          {me?.votingDone ? "Edit my votes" : "I am done voting"}
+        </button>
       </div>
 
     </div>

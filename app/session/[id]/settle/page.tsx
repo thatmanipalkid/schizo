@@ -20,6 +20,7 @@ import {
   StatusText,
 } from "@/components/ui";
 import type { Identity } from "@/lib/identity";
+import type { PersonBreakdown } from "@/lib/types";
 
 export default function SettlePage() {
   const { id } = useParams<{ id: string }>();
@@ -52,8 +53,17 @@ export default function SettlePage() {
   const isHost = Boolean(identity?.isHost);
   const waiting = session.status === "open" && !isHost;
   const showResults = session.status === "calculating" || session.status === "settled";
+  const doneCount = people.filter((person) => person.votingDone).length;
+  const everyoneDone = people.length > 0 && doneCount === people.length;
+  const currentPerson = identity
+    ? result.breakdowns.find((person) => person.personId === identity.personId)
+    : null;
+  const otherPeople = result.breakdowns.filter(
+    (person) => person.personId !== identity?.personId
+  );
 
   async function settle() {
+    if (!everyoneDone) return;
     setBusy(true);
     try {
       await setSessionStatus(id, "calculating");
@@ -156,8 +166,15 @@ export default function SettlePage() {
 
       {isHost && session.status === "open" ? (
         <div className="mb-6">
-          <PrimaryButton type="button" disabled={busy} onClick={settle}>
-            {busy ? "Confirming…" : "Everyone is in, show calculation"}
+          <p className="mb-2 text-sm text-muted">
+            {doneCount} of {people.length} people are done voting.
+          </p>
+          <PrimaryButton type="button" disabled={busy || !everyoneDone} onClick={settle}>
+            {busy
+              ? "Confirming…"
+              : everyoneDone
+                ? "Everyone is done, show calculation"
+                : "Waiting for everyone to finish"}
           </PrimaryButton>
         </div>
       ) : null}
@@ -188,27 +205,20 @@ export default function SettlePage() {
       ) : null}
 
       {showResults ? (
-        <ul className="space-y-4">
-          {result.breakdowns.map((row) => {
-          return (
-            <li key={row.personId} className="border-b border-line pb-4">
-              <div className="mb-2 flex items-baseline justify-between">
-                <p className="text-base font-medium">{row.name}</p>
-                <p className="text-xl font-semibold">
-                  {formatRupee(row.finalAmount)}
-                </p>
-              </div>
-              <Row label="Items" value={formatRupee(row.itemSubtotal)} />
-              <Row label="Tax" value={formatRupee(row.taxShare)} />
-              <Row
-                label="Service charge"
-                value={formatRupee(row.serviceShare)}
-              />
-              <Row label="Discount" value={`−${formatRupee(row.discountShare)}`} />
-            </li>
-          );
-          })}
-        </ul>
+        <>
+          {currentPerson ? <PersonalBreakdown person={currentPerson} /> : null}
+          <section className="mt-8">
+            <h2 className="mb-3 text-sm font-medium text-muted">Everyone else</h2>
+            <ul className="divide-y divide-line border-y border-line">
+              {otherPeople.map((person) => (
+                <li key={person.personId} className="flex justify-between py-3 text-sm">
+                  <span>{person.name} pays</span>
+                  <strong>{formatRupee(person.finalAmount)}</strong>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </>
       ) : null}
 
       {isHost ? (
@@ -257,5 +267,37 @@ function Row({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <span>{value}</span>
     </div>
+  );
+}
+
+function PersonalBreakdown({ person }: { person: PersonBreakdown }) {
+  const itemTotal = person.itemShares.reduce((sum, item) => sum + Math.round(item.amount), 0);
+  const displayedTotal = itemTotal + person.taxShare + person.serviceShare - person.discountShare;
+  const roundingAdjustment = person.finalAmount - displayedTotal;
+
+  return (
+    <section className="rounded-lg border-2 border-accent bg-neutral-50 p-4">
+      <div className="mb-4 flex items-baseline justify-between gap-3">
+        <h2 className="text-lg font-semibold">You pay</h2>
+        <p className="text-2xl font-semibold text-accent">{formatRupee(person.finalAmount)}</p>
+      </div>
+      <ul className="space-y-2 border-t border-line pt-3 text-sm">
+        {person.itemShares.map((item) => (
+          <li key={item.itemId} className="flex justify-between gap-3">
+            <span>{item.itemName} (split {item.ways} ways)</span>
+            <span>{formatRupee(item.amount)}</span>
+          </li>
+        ))}
+        <Row label="Tax" value={formatRupee(person.taxShare)} />
+        <Row label="Service charge" value={formatRupee(person.serviceShare)} />
+        <Row label="Discount" value={`−${formatRupee(person.discountShare)}`} />
+        {roundingAdjustment !== 0 ? (
+          <Row
+            label="Rounding adjustment"
+            value={`${roundingAdjustment > 0 ? "+" : "−"}${formatRupee(Math.abs(roundingAdjustment))}`}
+          />
+        ) : null}
+      </ul>
+    </section>
   );
 }

@@ -84,6 +84,7 @@ export default function JoinPage() {
         joinedAt: serverTimestamp(),
         isHost: false,
         authUid: user.uid,
+        votingDone: false,
       });
       setIdentity(id, {
         personId: personRef.id,

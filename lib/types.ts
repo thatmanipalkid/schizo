@@ -29,6 +29,7 @@ export type PersonDoc = {
   joinedAt: unknown;
   isHost: boolean;
   authUid?: string;
+  votingDone?: boolean;
 };
 
 export type ClaimDoc = {
@@ -50,6 +51,12 @@ export type PersonBreakdown = {
   serviceShare: number;
   discountShare: number;
   finalAmount: number;
+  itemShares: {
+    itemId: string;
+    itemName: string;
+    ways: number;
+    amount: number;
+  }[];
 };
 
 export type SettlementResult = {

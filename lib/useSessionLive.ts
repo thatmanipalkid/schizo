@@ -74,6 +74,7 @@ export function useSessionLive(sessionId: string) {
           joinedAt: d.data().joinedAt,
           isHost: Boolean(d.data().isHost),
           authUid: d.data().authUid ? String(d.data().authUid) : undefined,
+          votingDone: Boolean(d.data().votingDone),
         })));
       });
 

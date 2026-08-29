@@ -1,194 +1,122 @@
-import type {
-  Claim,
-  Item,
-  Person,
-  PersonBreakdown,
-  Session,
-  SettlementResult,
-} from "./types";
+import type { Claim, Item, Person, PersonBreakdown, Session, SettlementResult } from "./types";
 
-function roundRupee(n: number) {
-  return Math.round(n);
+export type PersonItemShare = {
+  itemId: string;
+  itemName: string;
+  ways: number;
+  amount: number;
+};
+
+function nonnegative(value: number) {
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function rounded(value: number) {
+  return Math.round(nonnegative(value));
 }
 
 function claimsForItem(claims: Claim[], itemId: string) {
-  return claims.filter((c) => c.itemId === itemId);
+  return claims.filter((claim) => claim.itemId === itemId);
 }
 
-function fractionForClaim(claim: Claim, claims: Claim[]) {
-  const itemClaims = claimsForItem(claims, claim.itemId);
-  return itemClaims.length > 0 ? 1 / itemClaims.length : 0;
+function uniqueValidClaims(people: Person[], claims: Claim[]) {
+  const personIds = new Set(people.map((person) => person.id));
+  const seen = new Set<string>();
+  return claims.filter((claim) => {
+    const key = `${claim.itemId}:${claim.personId}`;
+    if (!personIds.has(claim.personId) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
-function peopleWithClaims(people: Person[], claims: Claim[]) {
-  const ids = new Set(claims.map((c) => c.personId));
-  return people.filter((p) => ids.has(p.id));
-}
-
-function effectiveClaims(
-  items: Item[],
-  people: Person[],
-  claims: Claim[],
-  splitUnclaimedEqually: boolean
-): Claim[] {
-  if (!splitUnclaimedEqually) return claims;
-
-  const claimants = peopleWithClaims(people, claims);
-  if (claimants.length === 0) return claims;
-
+function effectiveClaims(items: Item[], people: Person[], claims: Claim[], splitUnclaimedEqually: boolean) {
+  const validClaims = uniqueValidClaims(people, claims);
+  if (!splitUnclaimedEqually) return validClaims;
+  const claimantIds = new Set(validClaims.map((claim) => claim.personId));
+  if (claimantIds.size === 0) return validClaims;
   const extra: Claim[] = [];
   for (const item of items) {
-    const totalShare = claimsForItem(claims, item.id).reduce(
-      (sum, c) => sum + c.shareFraction,
-      0
-    );
-    if (totalShare > 0) continue;
-    const fraction = 1 / claimants.length;
-    for (const person of claimants) {
-      extra.push({
-        id: `virtual-${item.id}-${person.id}`,
-        itemId: item.id,
-        personId: person.id,
-        shareFraction: fraction,
-      });
+    if (claimsForItem(validClaims, item.id).length > 0) continue;
+    for (const personId of claimantIds) {
+      extra.push({ id: `virtual-${item.id}-${personId}`, itemId: item.id, personId, shareFraction: 1 / claimantIds.size });
     }
   }
-  return [...claims, ...extra];
+  return [...validClaims, ...extra];
 }
 
 export function computeSettlement(
-  session: Pick<
-    Session,
-    "taxAmount" | "serviceChargeAmount" | "discountAmount" | "billTotal"
-  >,
+  session: Pick<Session, "taxAmount" | "serviceChargeAmount" | "discountAmount" | "billTotal">,
   items: Item[],
   people: Person[],
   claims: Claim[],
   splitUnclaimedEqually = false
 ): SettlementResult {
-  const workingClaims = effectiveClaims(
-    items,
-    people,
-    claims,
-    splitUnclaimedEqually
-  );
+  const workingClaims = effectiveClaims(items, people, claims, splitUnclaimedEqually);
+  const sharesByPerson = new Map<string, PersonItemShare[]>();
+  const subtotalByPerson = new Map<string, number>();
+  people.forEach((person) => subtotalByPerson.set(person.id, 0));
 
-  const unclaimedItems = items.filter((item) => {
-    const totalShare = claimsForItem(workingClaims, item.id).reduce(
-      (sum, c) => sum + c.shareFraction,
-      0
-    );
-    return totalShare === 0;
-  });
-  const unclaimedTotal = unclaimedItems.reduce((sum, item) => sum + item.price, 0);
-
-  const rawByPerson = new Map<string, number>();
-  for (const person of people) {
-    rawByPerson.set(person.id, 0);
-  }
-  for (const claim of workingClaims) {
-    const item = items.find((i) => i.id === claim.itemId);
-    if (!item) continue;
-    const prev = rawByPerson.get(claim.personId) ?? 0;
-    rawByPerson.set(
-      claim.personId,
-      prev + item.price * fractionForClaim(claim, workingClaims)
-    );
+  for (const item of items) {
+    const itemClaims = claimsForItem(workingClaims, item.id);
+    if (itemClaims.length === 0) continue;
+    const amount = nonnegative(item.price) / itemClaims.length;
+    for (const claim of itemClaims) {
+      const shares = sharesByPerson.get(claim.personId) ?? [];
+      shares.push({ itemId: item.id, itemName: item.name, ways: itemClaims.length, amount });
+      sharesByPerson.set(claim.personId, shares);
+      subtotalByPerson.set(claim.personId, (subtotalByPerson.get(claim.personId) ?? 0) + amount);
+    }
   }
 
-  const claimants = peopleWithClaims(people, workingClaims);
-  const sumRaw = claimants.reduce(
-    (sum, p) => sum + (rawByPerson.get(p.id) ?? 0),
-    0
-  );
+  const unclaimedItems = items.filter((item) => claimsForItem(workingClaims, item.id).length === 0);
+  const unclaimedTotal = unclaimedItems.reduce((sum, item) => sum + nonnegative(item.price), 0);
+  const allSubtotals = Array.from(subtotalByPerson.values()).reduce((sum, value) => sum + value, 0);
+  const tax = nonnegative(session.taxAmount);
+  const service = nonnegative(session.serviceChargeAmount);
+  const discount = nonnegative(session.discountAmount);
 
-  const unrounded: PersonBreakdown[] = people.map((person) => {
-    const itemSubtotal = rawByPerson.get(person.id) ?? 0;
-    const hasClaim = claimants.some((p) => p.id === person.id);
-    const share = hasClaim && sumRaw > 0 ? itemSubtotal / sumRaw : 0;
-    const taxShare = session.taxAmount * share;
-    const serviceShare = session.serviceChargeAmount * share;
-    const discountShare = session.discountAmount * share;
-    const finalAmount =
-      itemSubtotal + taxShare + serviceShare - discountShare;
+  const breakdowns = people.map((person): PersonBreakdown => {
+    const itemSubtotal = subtotalByPerson.get(person.id) ?? 0;
+    const proportion = allSubtotals > 0 ? itemSubtotal / allSubtotals : 0;
+    const taxShare = tax * proportion;
+    const serviceShare = service * proportion;
+    const discountShare = discount * proportion;
+    const finalAmount = Math.max(0, itemSubtotal + taxShare + serviceShare - discountShare);
     return {
       personId: person.id,
       name: person.name,
-      itemSubtotal,
-      taxShare,
-      serviceShare,
-      discountShare,
-      finalAmount,
+      itemSubtotal: rounded(itemSubtotal),
+      taxShare: rounded(taxShare),
+      serviceShare: rounded(serviceShare),
+      discountShare: rounded(discountShare),
+      finalAmount: rounded(finalAmount),
+      itemShares: sharesByPerson.get(person.id) ?? [],
     };
   });
 
-  const withClaims = unrounded.filter((b) =>
-    claimants.some((p) => p.id === b.personId)
-  );
-  const withoutClaims = unrounded.filter(
-    (b) => !claimants.some((p) => p.id === b.personId)
-  );
+  const sumRounded = breakdowns.reduce((sum, person) => sum + person.finalAmount, 0);
+  const billTotal = nonnegative(session.billTotal);
+  const leftover = billTotal - sumRounded;
+  if (Math.abs(leftover) > 5) console.warn("Settlement leftover exceeds normal rounding tolerance", { leftover, billTotal, sumRounded });
 
-  const rounded = withClaims.map((b) => ({
-    ...b,
-    itemSubtotal: roundRupee(b.itemSubtotal),
-    taxShare: roundRupee(b.taxShare),
-    serviceShare: roundRupee(b.serviceShare),
-    discountShare: roundRupee(b.discountShare),
-    finalAmount: roundRupee(b.finalAmount),
-  }));
-
-  const sumRounded = rounded.reduce((sum, b) => sum + b.finalAmount, 0);
-  const leftover = session.billTotal - sumRounded;
-  const hasUnclaimedMismatch = unclaimedTotal > 2 || Math.abs(leftover) > 2;
-
-  if (rounded.length > 0 && !Number.isNaN(leftover)) {
-    let targetIndex = 0;
-    for (let i = 1; i < rounded.length; i++) {
-      if (rounded[i].finalAmount > rounded[targetIndex].finalAmount) {
-        targetIndex = i;
-      }
-    }
-    rounded[targetIndex] = {
-      ...rounded[targetIndex],
-      finalAmount: rounded[targetIndex].finalAmount + leftover,
-    };
+  if (breakdowns.length > 0 && leftover !== 0) {
+    const targetIndex = breakdowns.reduce((largest, person, index, all) => person.finalAmount > all[largest].finalAmount ? index : largest, 0);
+    const target = breakdowns[targetIndex];
+    const adjusted = target.finalAmount + leftover;
+    if (adjusted >= 0) breakdowns[targetIndex] = { ...target, finalAmount: adjusted };
+    else console.warn("Settlement leftover would make a person negative", { leftover, targetPersonId: target.personId });
   }
 
-  const breakdowns = [
-    ...rounded,
-    ...withoutClaims.map((b) => ({
-      ...b,
-      itemSubtotal: 0,
-      taxShare: 0,
-      serviceShare: 0,
-      discountShare: 0,
-      finalAmount: 0,
-    })),
-  ];
-
-  const sumFinal = breakdowns.reduce((sum, b) => sum + b.finalAmount, 0);
-
+  const sumFinal = breakdowns.reduce((sum, person) => sum + person.finalAmount, 0);
   return {
     breakdowns,
     unclaimedItems,
     unclaimedTotal,
     sumFinal,
-    billTotal: session.billTotal,
-    mismatch: session.billTotal - sumFinal,
-    hasUnclaimedMismatch,
+    billTotal,
+    mismatch: billTotal - sumFinal,
+    hasUnclaimedMismatch: unclaimedTotal > 2 || Math.abs(leftover) > 2,
   };
 }
 
-export function personRunningTotal(
-  personId: string,
-  items: Item[],
-  claims: Claim[]
-) {
-  const mine = claims.filter((c) => c.personId === personId);
-  return mine.reduce((sum, claim) => {
-    const item = items.find((i) => i.id === claim.itemId);
-    if (!item) return sum;
-    return sum + item.price * claim.shareFraction;
-  }, 0);
-}
