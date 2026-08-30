@@ -225,7 +225,7 @@ export default function HostSetupPage() {
       <BrandHeader />
       <div className="flex items-center gap-2 mb-2">
         <h1 className="text-xl font-medium">{session.restaurantName}</h1>
-        <Badge tone="green">You're the host</Badge>
+        <Badge tone="green">You&apos;re the host</Badge>
       </div>
       <p className="mb-6 text-sm text-muted">Add the bill, then open voting.</p>
 
