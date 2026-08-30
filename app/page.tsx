@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db, ensureAnonymousAuth } from "@/lib/firebase";
 import { setIdentity } from "@/lib/identity";
-import { Field, PrimaryButton, Screen } from "@/components/ui";
+import { Field, PrimaryButton, Screen, BrandHeader } from "@/components/ui";
 
 export default function HomePage() {
   const router = useRouter();
@@ -68,7 +68,7 @@ export default function HomePage() {
 
   return (
     <Screen>
-      <p className="mb-2 text-sm tracking-wide text-muted">thatmanipalkid</p>
+      <BrandHeader />
       <h1 className="mb-8 text-3xl font-semibold">Split the bill simply.</h1>
       <form onSubmit={onSubmit} className="space-y-4">
         <Field

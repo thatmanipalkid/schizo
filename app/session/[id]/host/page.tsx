@@ -25,6 +25,9 @@ import {
   Screen,
   SecondaryButton,
   StatusText,
+  BrandHeader,
+  UploadButton,
+  Badge,
 } from "@/components/ui";
 
 type ParsedBill = {
@@ -219,15 +222,26 @@ export default function HostSetupPage() {
   return (
     <Screen>
       <BackButton onClick={goBack} />
-      <h1 className="mb-1 text-xl font-semibold">{session.restaurantName}</h1>
-      <p className="mb-6 inline-flex rounded-full bg-accent/10 px-3 py-1 text-sm font-medium text-accent">
-        You&apos;re the host
-      </p>
+      <BrandHeader />
+      <div className="flex items-center gap-2 mb-2">
+        <h1 className="text-xl font-medium">{session.restaurantName}</h1>
+        <Badge tone="green">You're the host</Badge>
+      </div>
       <p className="mb-6 text-sm text-muted">Add the bill, then open voting.</p>
 
       <div className="space-y-3">
-        <label className="flex min-h-[44px] w-full cursor-pointer items-center justify-center rounded-lg border border-line bg-white px-4 text-base">
-          Upload bill photo
+        <label className="flex min-h-[44px] w-full cursor-pointer items-center justify-center">
+          <UploadButton
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              const input = e.currentTarget.parentElement?.querySelector('input[type="file"]') as HTMLInputElement;
+              input?.click();
+            }}
+            disabled={reading}
+          >
+            Upload bill photo
+          </UploadButton>
           <input
             type="file"
             accept="image/*"
@@ -256,12 +270,14 @@ export default function HostSetupPage() {
               inputMode="decimal"
               value={newPrice}
               onChange={(e) => setNewPrice(e.target.value)}
+              className="font-mono"
             />
             <Field
               label="Quantity (optional)"
               inputMode="numeric"
               value={newQty}
               onChange={(e) => setNewQty(e.target.value)}
+              className="font-mono"
             />
           </div>
           <SecondaryButton type="submit">+ Add</SecondaryButton>
@@ -287,12 +303,14 @@ export default function HostSetupPage() {
                       inputMode="decimal"
                       value={editPrice}
                       onChange={(e) => setEditPrice(e.target.value)}
+                      className="font-mono"
                     />
                     <Field
                       label="Qty (optional)"
                       inputMode="numeric"
                       value={editQty}
                       onChange={(e) => setEditQty(e.target.value)}
+                      className="font-mono"
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
@@ -309,7 +327,7 @@ export default function HostSetupPage() {
                   <div>
                     <p className="text-base font-medium">{item.name}</p>
                     <p className="text-sm text-muted">
-                      ₹{item.price} · qty {item.quantity}
+                      <span className="font-mono font-bold text-[#2F6E5E]">₹{item.price}</span> · qty <span className="font-mono">{item.quantity}</span>
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -371,11 +389,11 @@ export default function HostSetupPage() {
           Delete session
         </button>
       </div>
-      <div className="fixed bottom-0 left-0 right-0 z-10 border-t border-accent/20 bg-white/95 px-4 py-3 shadow-[0_-2px_8px_rgba(0,0,0,0.08)] backdrop-blur">
+      <div className="fixed bottom-0 left-0 right-0 z-10 border-t border-[#E4DFD3] bg-white px-4 py-3 shadow-[0_-2px_8px_rgba(0,0,0,0.08)] backdrop-blur">
         <div className="mx-auto max-w-md">
           <div className="flex items-baseline justify-between gap-3">
             <p className="text-sm font-medium text-muted">Total</p>
-            <p className="text-2xl font-bold text-accent">{formatRupee(computedTotal)}</p>
+            <p className="text-2xl font-bold font-mono text-[#2F6E5E]">{formatRupee(computedTotal)}</p>
           </div>
           <p className="mt-1 truncate text-xs text-muted">
             Items: {formatRupee(computedItemsTotal)} + Tax: {formatRupee(parseNumber(tax))} + Service: {formatRupee(parseNumber(service))} - Discount: {formatRupee(parseNumber(discount))}

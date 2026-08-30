@@ -14,7 +14,7 @@ import {
   updatePresence,
 } from "@/lib/sessionWrites";
 import { useSessionLive } from "@/lib/useSessionLive";
-import { BackButton, Screen, StatusText } from "@/components/ui";
+import { BackButton, Screen, StatusText, BrandHeader, Badge } from "@/components/ui";
 import type { Identity } from "@/lib/identity";
 
 export default function VotePage() {
@@ -184,6 +184,7 @@ export default function VotePage() {
     <div className="mx-auto min-h-screen w-full max-w-md bg-white">
       <div className="px-4 pb-28 pt-6">
         <BackButton onClick={() => setConfirmLeave((current) => !current)} disabled={pendingDone} />
+        <BrandHeader />
         {confirmLeave ? (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3">
             <p className="text-sm text-red-800">
@@ -212,7 +213,7 @@ export default function VotePage() {
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold">{session.restaurantName}</h1>
-            <p className="text-sm font-medium text-accent">
+            <p className="text-sm font-medium text-[#4FAE7A]">
               Voting as: {me?.name || identity.name}
             </p>
             <p className="text-sm text-muted">
@@ -288,7 +289,7 @@ export default function VotePage() {
                   </span>
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{item.name}</p>
-                    <p className="text-base font-semibold">{formatRupee(item.price)}</p>
+                    <p className="text-base font-semibold font-mono text-[#2F6E5E]">{formatRupee(item.price)}</p>
                   </div>
                 </div>
                 {claimers.length > 0 ? (
@@ -329,13 +330,13 @@ export default function VotePage() {
                 return (
                   <li key={item.id} className="flex justify-between gap-3">
                     <span className="min-w-0 truncate">{item.name}</span>
-                    <span className="shrink-0">{formatRupee(ways ? item.price / ways : 0)}</span>
+                    <span className="shrink-0 font-mono font-bold text-[#2F6E5E]">{formatRupee(ways ? item.price / ways : 0)}</span>
                   </li>
                 );
               })}
             </ul>
           ) : (
-            <p className="text-sm text-muted">Nothing selected yet.</p>
+            <p className="text-sm italic text-[#C24B4B]">Nothing selected yet.</p>
           )}
         </section>
         <button
