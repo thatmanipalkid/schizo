@@ -7,9 +7,8 @@ export type PersonItemShare = {
   amount: number;
 };
 
-export function itemTotal(item: Pick<Item, "price" | "quantity">) {
-  const quantity = item.quantity == null ? 1 : nonnegative(item.quantity);
-  return nonnegative(item.price) * quantity;
+export function itemTotal(item: Pick<Item, "price">) {
+  return nonnegative(item.price);
 }
 
 export function computeBillTotal(
@@ -93,12 +92,13 @@ export function computeSettlement(
   const tax = nonnegative(session.taxAmount);
   const service = nonnegative(session.serviceChargeAmount);
   const discount = nonnegative(session.discountAmount);
+  const peopleCount = people.length;
 
   const breakdowns = people.map((person): PersonBreakdown => {
     const itemSubtotal = subtotalByPerson.get(person.id) ?? 0;
     const proportion = allSubtotals > 0 ? itemSubtotal / allSubtotals : 0;
-    const taxShare = tax * proportion;
-    const serviceShare = service * proportion;
+    const taxShare = peopleCount > 0 ? tax / peopleCount : 0;
+    const serviceShare = peopleCount > 0 ? service / peopleCount : 0;
     const discountShare = discount * proportion;
     const finalAmount = Math.max(0, itemSubtotal + taxShare + serviceShare - discountShare);
     return {

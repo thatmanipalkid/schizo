@@ -55,7 +55,7 @@ export function Field({
       <Label>{label}</Label>
       <input
         {...props}
-        className="min-h-[42px] w-full rounded-lg border border-[#E4DFD3] bg-white px-3 text-sm text-ink outline-none focus:border-[#4FAE7A]"
+        className="min-h-[42px] w-full rounded-lg border border-[#E4DFD3] bg-white px-3 text-base text-ink outline-none focus:border-[#4FAE7A]"
       />
     </div>
   );

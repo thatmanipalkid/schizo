@@ -13,7 +13,7 @@ import {
 } from "firebase/firestore";
 import { db, auth } from "@/lib/firebase";
 import { getIdentity } from "@/lib/identity";
-import { fileToBase64Image } from "@/lib/image";
+import { extractBillData, type BillData } from "@/lib/ocr";
 import { formatRupee, parseNumber } from "@/lib/format";
 import { computeBillTotal, itemTotal } from "@/lib/settlement";
 import { useSessionLive } from "@/lib/useSessionLive";
@@ -29,14 +29,6 @@ import {
   UploadButton,
   Badge,
 } from "@/components/ui";
-
-type ParsedBill = {
-  items: { name: string; price: number; quantity: number }[];
-  tax: number;
-  serviceCharge: number;
-  discount: number;
-  total: number;
-};
 
 export default function HostSetupPage() {
   const { id } = useParams<{ id: string }>();
@@ -55,6 +47,7 @@ export default function HostSetupPage() {
   const [discount, setDiscount] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [reading, setReading] = useState(false);
+  const [ocrDebugData, setOcrDebugData] = useState<BillData | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -157,14 +150,12 @@ export default function HostSetupPage() {
     setReading(true);
     setError("");
     try {
-      const { base64, mediaType } = await fileToBase64Image(file);
-      const res = await fetch("/api/parse-bill", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64: base64, mediaType }),
-      });
-      const data = (await res.json()) as ParsedBill & { error?: string };
-      if (!res.ok) throw new Error(data.error || "Could not read bill");
+      const ocr = await extractBillData(file);
+      if (!ocr.success || !ocr.data) {
+        throw new Error(ocr.error || "Could not read bill data");
+      }
+      const data = ocr.data;
+      setOcrDebugData(data);
       const batch = writeBatch(db);
       for (const item of data.items ?? []) {
         const ref = doc(collection(db, "sessions", id, "items"));
@@ -177,13 +168,13 @@ export default function HostSetupPage() {
       batch.update(doc(db, "sessions", id), {
         taxAmount: Number(data.tax) || 0,
         serviceChargeAmount: Number(data.serviceCharge) || 0,
-        discountAmount: Number(data.discount) || 0,
+        discountAmount: 0,
         billTotal: Number(data.total) || 0,
       });
       await batch.commit();
       setTax(data.tax ? String(data.tax) : "");
       setService(data.serviceCharge ? String(data.serviceCharge) : "");
-      setDiscount(data.discount ? String(data.discount) : "");
+      setDiscount("");
     } catch (err) {
       setError(
         err instanceof Error && err.message
@@ -245,7 +236,6 @@ export default function HostSetupPage() {
           <input
             type="file"
             accept="image/*"
-            capture="environment"
             className="hidden"
             disabled={reading}
             onChange={(e) => {
@@ -256,6 +246,28 @@ export default function HostSetupPage() {
           />
         </label>
         {reading ? <p className="text-sm text-muted">Reading bill...</p> : null}
+        {process.env.NODE_ENV === "development" && ocrDebugData ? (
+          <section className="rounded-lg border border-dashed border-accent bg-accent/5 p-3 text-sm">
+            <p className="mb-2 font-medium text-accent">Data in the bill</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="text-muted">
+                  <tr><th className="pb-1 pr-3 font-medium">Name</th><th className="pb-1 pr-3 font-medium">Qty</th><th className="pb-1 font-medium">Price</th></tr>
+                </thead>
+                <tbody>
+                  {ocrDebugData.items.map((item, index) => (
+                    <tr key={`${item.name}-${index}`} className="border-t border-accent/20">
+                      <td className="py-1 pr-3">{item.name}</td><td className="py-1 pr-3">{item.quantity}</td><td className="py-1">{formatRupee(item.price)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-xs text-muted">
+              Subtotal: {ocrDebugData.subtotal == null ? "—" : formatRupee(ocrDebugData.subtotal)} · Tax: {ocrDebugData.tax == null ? "—" : formatRupee(ocrDebugData.tax)} · Service: {ocrDebugData.serviceCharge == null ? "—" : formatRupee(ocrDebugData.serviceCharge)} · Total: {ocrDebugData.total == null ? "—" : formatRupee(ocrDebugData.total)}
+            </p>
+          </section>
+        ) : null}
 
         <form onSubmit={addItem} className="space-y-3 border-t border-line pt-4">
           <p className="text-sm text-muted">Add items manually</p>

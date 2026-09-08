@@ -6,9 +6,8 @@ import { useParams, useRouter } from "next/navigation";
 import { clearIdentity, getIdentity } from "@/lib/identity";
 import { initials, formatRupee } from "@/lib/format";
 import {
-  deletePerson,
   optOutPerson,
-  removeInactiveParticipants,
+  setSessionStatus,
   setVotingDone,
   toggleClaim,
   updatePresence,
@@ -25,6 +24,7 @@ export default function VotePage() {
   const [checked, setChecked] = useState(false);
   const [pendingItem, setPendingItem] = useState<string | null>(null);
   const [pendingDone, setPendingDone] = useState(false);
+  const [pendingCalculate, setPendingCalculate] = useState(false);
   const [inlineError, setInlineError] = useState("");
   const [confirmLeave, setConfirmLeave] = useState(false);
 
@@ -41,50 +41,16 @@ export default function VotePage() {
   useEffect(() => {
     if (!identity || !session || session.status !== "open") return;
     const personId = identity.personId;
-    const isHost = identity.isHost;
-    let graceTimer: ReturnType<typeof setTimeout> | undefined;
-    let disconnectStarted = false;
 
     const heartbeat = () => {
       void updatePresence(id, personId).catch(() => undefined);
     };
-    const removeAfterGrace = () => {
-      if (graceTimer) clearTimeout(graceTimer);
-      graceTimer = setTimeout(() => {
-        if (!isHost) {
-          clearIdentity(id);
-          void deletePerson(id, personId).catch(() => undefined);
-        }
-      }, 10000);
-    };
-    const resume = () => {
-      if (graceTimer) clearTimeout(graceTimer);
-      heartbeat();
-    };
-    const onPageHide = () => {
-      if (!isHost && !disconnectStarted) {
-        disconnectStarted = true;
-        clearIdentity(id);
-        void deletePerson(id, personId).catch(() => undefined);
-      }
-    };
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") removeAfterGrace();
-      else resume();
-    };
 
     heartbeat();
     const interval = window.setInterval(heartbeat, 5000);
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("pagehide", onPageHide);
-    window.addEventListener("beforeunload", onPageHide);
 
     return () => {
       window.clearInterval(interval);
-      if (graceTimer) clearTimeout(graceTimer);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("pagehide", onPageHide);
-      window.removeEventListener("beforeunload", onPageHide);
     };
   }, [id, identity, session]);
 
@@ -95,16 +61,6 @@ export default function VotePage() {
       router.replace(`/session/${id}/join`);
     }
   }, [id, identity, loading, people, router]);
-
-  useEffect(() => {
-    if (!identity?.isHost || session?.status !== "open") return;
-    const cleanup = () => {
-      void removeInactiveParticipants(id).catch(() => undefined);
-    };
-    cleanup();
-    const interval = window.setInterval(cleanup, 5000);
-    return () => window.clearInterval(interval);
-  }, [id, identity?.isHost, session?.status]);
 
   if (loading || !checked) {
     return <Screen><StatusText>Loading session…</StatusText></Screen>;
@@ -135,6 +91,7 @@ export default function VotePage() {
 
   const me = people.find((person) => person.id === identity.personId);
   const doneCount = people.filter((person) => person.isDoneVoting).length;
+  const everyoneDone = people.length > 0 && doneCount === people.length;
 
   async function onToggle(itemId: string) {
     const me = identity && people.find((person) => person.id === identity.personId);
@@ -165,6 +122,16 @@ export default function VotePage() {
       await setVotingDone(id, me.id, !me.isDoneVoting);
     } finally {
       setPendingDone(false);
+    }
+  }
+
+  async function calculate() {
+    if (!identity?.isHost || !everyoneDone) return;
+    setPendingCalculate(true);
+    try {
+      await setSessionStatus(id, "calculating");
+    } finally {
+      setPendingCalculate(false);
     }
   }
 
@@ -222,12 +189,24 @@ export default function VotePage() {
             <p className="text-sm text-muted">{doneCount} of {people.length} done voting</p>
           </div>
           {identity.isHost ? (
-            <Link
-              href={`/session/${id}/settle`}
-              className="flex min-h-[44px] items-center rounded-lg bg-accent px-3 text-sm font-medium text-white"
-            >
-              Review people
-            </Link>
+            <div className="flex min-w-0 max-w-[55%] flex-col items-end gap-2">
+              {everyoneDone ? (
+                <button
+                  type="button"
+                  disabled={pendingCalculate}
+                  onClick={calculate}
+                  className="min-h-[44px] rounded-lg bg-accent px-3 text-center text-sm font-medium text-white"
+                >
+                  {pendingCalculate ? "Calculating…" : "Calculate (everyone has voted)"}
+                </button>
+              ) : null}
+              <Link
+                href={`/session/${id}/settle`}
+                className="flex min-h-[44px] items-center rounded-lg border border-accent px-3 text-sm font-medium text-accent"
+              >
+                Review people
+              </Link>
+            </div>
           ) : null}
         </div>
         {inlineError ? (

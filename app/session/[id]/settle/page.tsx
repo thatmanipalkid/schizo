@@ -218,7 +218,7 @@ export default function SettlePage() {
               {result.unclaimedItems.map((item) => (
                 <label key={item.id} className="block text-sm text-muted">
                   {item.name}
-                  <select defaultValue="" disabled={busy || people.length === 0} onChange={(e) => reallocateItem(item.id, e.target.value)} className="mt-1 min-h-[42px] w-full rounded-lg border border-line bg-white px-3 text-sm text-ink">
+                  <select defaultValue="" disabled={busy || people.length === 0} onChange={(e) => reallocateItem(item.id, e.target.value)} className="mt-1 min-h-[42px] w-full rounded-lg border border-line bg-white px-3 text-base text-ink">
                     <option value="">Assign to…</option>
                     {people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
                   </select>
