@@ -355,13 +355,13 @@ function PersonalBreakdown({ person }: { person: PersonBreakdown }) {
   const roundingAdjustment = person.finalAmount - displayedTotal;
 
   return (
-    <section className="rounded-lg border-2 border-accent bg-neutral-50 p-4">
+    <section className="rounded-lg border-2 border-[#8CCAA2] bg-[#EEF9F1] p-4 shadow-sm">
       <div className="mb-4 flex items-baseline justify-between gap-3">
-        <h2 className="text-lg font-semibold">
+        <h2 className="text-lg font-semibold text-[#1D5E46]">
           {person.name}, you pay {formatRupee(person.finalAmount)}
         </h2>
       </div>
-      <ul className="space-y-2 border-t border-line pt-3 text-sm">
+      <ul className="space-y-2 border-t border-[#CFEAD9] pt-3 text-sm text-[#1D5E46]">
         {person.itemShares.map((item) => (
           <li key={item.itemId} className="flex justify-between gap-3">
             <span>{item.itemName} (split {item.ways} ways)</span>

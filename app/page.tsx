@@ -22,29 +22,39 @@ export default function HomePage() {
     setError("");
     try {
       const user = await ensureAnonymousAuth();
-      const sessionRef = await addDoc(collection(db, "sessions"), {
-        restaurantName: restaurantName.trim() || "Untitled Session",
-        createdAt: serverTimestamp(),
-        expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
-        status: "draft",
-        hostUid: user.uid,
-        taxAmount: 0,
-        serviceChargeAmount: 0,
-        discountAmount: 0,
-        billTotal: 0,
-      });
+      const sessionRef = await Promise.race([
+        addDoc(collection(db, "sessions"), {
+          restaurantName: restaurantName.trim() || "Untitled Session",
+          createdAt: serverTimestamp(),
+          expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+          status: "draft",
+          hostUid: user.uid,
+          taxAmount: 0,
+          serviceChargeAmount: 0,
+          discountAmount: 0,
+          billTotal: 0,
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error("Session creation timed out. Check your internet connection and Firebase Firestore access.")), 20000);
+        }),
+      ]);
 
-      const personRef = await addDoc(
-        collection(db, "sessions", sessionRef.id, "people"),
-        {
-          name: trimmedName,
-          joinedAt: serverTimestamp(),
-          isHost: true,
-          authUid: user.uid,
-          isDoneVoting: false,
-          lastSeen: new Date(),
-        }
-      );
+      const personRef = await Promise.race([
+        addDoc(
+          collection(db, "sessions", sessionRef.id, "people"),
+          {
+            name: trimmedName,
+            joinedAt: serverTimestamp(),
+            isHost: true,
+            authUid: user.uid,
+            isDoneVoting: false,
+            lastSeen: new Date(),
+          }
+        ),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error("Creating your session profile timed out. Check your Firebase connection and try again.")), 20000);
+        }),
+      ]);
 
       setIdentity(sessionRef.id, {
         personId: personRef.id,
@@ -58,10 +68,13 @@ export default function HomePage() {
       setError(
         code.includes("auth/configuration-not-found")
           ? "Firebase Authentication is not enabled. In Firebase Console, open Authentication, click Get started, enable Anonymous sign-in, and try again."
-          : err instanceof Error && err.message
-            ? err.message
-            : "Could not start a session. Try again."
+          : code.includes("not configured") || code.includes("timed out") || code.includes("Firebase")
+            ? code
+            : err instanceof Error && err.message
+              ? err.message
+              : "Could not start a session. Try again."
       );
+    } finally {
       setBusy(false);
     }
   }
@@ -73,7 +86,7 @@ export default function HomePage() {
       <form onSubmit={onSubmit} className="space-y-4">
         <Field
           label="Your name"
-          placeholder="e.g. Aditi"
+          placeholder="e.g. Sourav"
           value={name}
           onChange={(e) => setName(e.target.value)}
         />

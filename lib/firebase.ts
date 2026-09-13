@@ -11,12 +11,33 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID?.trim(),
 };
 
+const missingConfig = Object.entries(firebaseConfig)
+  .filter(([, value]) => !value)
+  .map(([key]) => key);
+
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 
+export function getFirebaseConfigError() {
+  if (missingConfig.length === 0) return "";
+  return `Firebase is not configured. Add ${missingConfig.join(", ")} to your .env.local file.`;
+}
+
 export async function ensureAnonymousAuth() {
   if (auth.currentUser) return auth.currentUser;
-  return (await signInAnonymously(auth)).user;
+  const configError = getFirebaseConfigError();
+  if (configError) {
+    throw new Error(configError);
+  }
+
+  const authResult = await Promise.race([
+    signInAnonymously(auth),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("Firebase authentication timed out. Check your internet connection and Firebase Auth setup.")), 15000);
+    }),
+  ]);
+
+  return authResult.user;
 }

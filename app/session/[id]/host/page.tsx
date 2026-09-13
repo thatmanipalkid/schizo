@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   addDoc,
@@ -47,6 +47,7 @@ export default function HostSetupPage() {
   const [discount, setDiscount] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [reading, setReading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [photoFiles, setPhotoFiles] = useState<{ id: string; file: File; url: string }[]>([]);
   const [readProgress, setReadProgress] = useState(0);
   const [ocrDebugData, setOcrDebugData] = useState<BillData | null>(null);
@@ -147,11 +148,25 @@ export default function HostSetupPage() {
     }
   }
 
+  function openFilePicker() {
+    fileInputRef.current?.click();
+  }
+
   function addPhotos(files: FileList | null) {
-    if (!files?.length) return;
+    if (!files?.length) {
+      setError("No image was selected.");
+      return;
+    }
+
+    const nextPhotos = Array.from(files).filter((file) => file.type.startsWith("image/"));
+    if (!nextPhotos.length) {
+      setError("Please choose a valid image file like PNG, JPG, or HEIC.");
+      return;
+    }
+
     setPhotoFiles((current) => [
       ...current,
-      ...Array.from(files).map((file) => ({
+      ...nextPhotos.map((file) => ({
         id: `${file.name}-${file.lastModified}-${Math.random()}`,
         file,
         url: URL.createObjectURL(file),
@@ -164,8 +179,14 @@ export default function HostSetupPage() {
     setPhotoFiles((current) => {
       const photo = current.find(({ id }) => id === photoId);
       if (photo) URL.revokeObjectURL(photo.url);
-      return current.filter(({ id }) => id !== photoId);
+      const next = current.filter(({ id }) => id !== photoId);
+      if (next.length === 0) {
+        setOcrDebugData(null);
+        setReadProgress(0);
+      }
+      return next;
     });
+    setError("");
   }
 
   async function confirmPhotos() {
@@ -193,6 +214,9 @@ export default function HostSetupPage() {
       setOcrDebugData(data);
       setReadProgress(82);
       const batch = writeBatch(db);
+      for (const item of items) {
+        batch.delete(doc(db, "sessions", id, "items", item.id));
+      }
       for (const item of data.items ?? []) {
         const ref = doc(collection(db, "sessions", id, "items"));
         batch.set(ref, {
@@ -259,6 +283,26 @@ export default function HostSetupPage() {
 
       <div className="space-y-3">
         <div className="space-y-3">
+          {photoFiles.length ? (
+            <div className="flex justify-start">
+              <div className="relative w-20 overflow-hidden rounded-lg border border-line bg-[#F7F6F1] shadow-sm">
+                {photoFiles.map((photo) => (
+                  <div key={photo.id} className="relative aspect-square">
+                    <img src={photo.url} alt={photo.file.name} className="h-full w-full object-cover" />
+                    <button
+                      type="button"
+                      aria-label={`Remove ${photo.file.name}`}
+                      onClick={() => removePhoto(photo.id)}
+                      disabled={reading}
+                      className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-white/95 text-sm leading-none text-red-700 shadow"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <UploadButton
             type="button"
             onClick={(e) => {
@@ -267,15 +311,16 @@ export default function HostSetupPage() {
                 void confirmPhotos();
                 return;
               }
-              (e.currentTarget.parentElement?.querySelector('input[type="file"]') as HTMLInputElement)?.click();
+              openFilePicker();
             }}
             disabled={reading}
           >
             {photoFiles.length ? "Confirm" : "Upload bill photo"}
           </UploadButton>
           <input
+            ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
             multiple
             className="hidden"
             disabled={reading}
@@ -285,31 +330,10 @@ export default function HostSetupPage() {
             }}
           />
           {photoFiles.length ? (
-            <div className="grid grid-cols-3 gap-2">
-              {photoFiles.map((photo) => (
-                <div key={photo.id} className="relative aspect-square overflow-hidden rounded-lg border border-line bg-[#F7F6F1]">
-                  <img src={photo.url} alt={photo.file.name} className="h-full w-full object-cover" />
-                  <button
-                    type="button"
-                    aria-label={`Remove ${photo.file.name}`}
-                    onClick={() => removePhoto(photo.id)}
-                    disabled={reading}
-                    className="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-lg leading-none text-red-700 shadow"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {photoFiles.length ? (
             <SecondaryButton
               type="button"
               disabled={reading}
-              onClick={(e) => {
-                const input = e.currentTarget.parentElement?.querySelector('input[type="file"]') as HTMLInputElement;
-                input?.click();
-              }}
+              onClick={() => openFilePicker()}
             >
               Add another photo
             </SecondaryButton>
@@ -470,7 +494,7 @@ export default function HostSetupPage() {
 
       {error ? <p className="mt-3 text-sm text-red-700">{error}</p> : null}
 
-      <div className="mt-6 space-y-3 pb-8">
+      <div className="mt-6 space-y-3 pb-32">
         <PrimaryButton type="button" disabled={busy} onClick={openSession}>
           {busy ? "Opening…" : "Open session for voting"}
         </PrimaryButton>
