@@ -26,7 +26,7 @@ The app does not require Google login and does not process payments. It uses Fir
 ### Bill entry
 
 - The creator can upload a bill image.
-- The server sends the image to Anthropic for extraction.
+- The server sends the image to Gemini for extraction.
 - Extracted line items, prices, quantities, tax, service charge, discount, and total are written to Firestore together.
 - The creator can also add, edit, and delete items manually.
 - Quantity is optional. If omitted, the item remains valid and is treated as one item for splitting.
@@ -128,7 +128,7 @@ Requirements:
 - Node.js 18 or newer
 - A Firebase project with Firestore
 - Firebase Anonymous Authentication enabled
-- An Anthropic API key for bill image parsing
+- A Gemini API key for bill image parsing
 
 Install and run:
 
@@ -156,12 +156,10 @@ NEXT_PUBLIC_FIREBASE_PROJECT_ID=...
 NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=...
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
 NEXT_PUBLIC_FIREBASE_APP_ID=...
-ANTHROPIC_API_KEY=...
-# Optional; defaults to claude-sonnet-4-20250514
-ANTHROPIC_MODEL=claude-sonnet-4-20250514
+GEMINI_API_KEY=...
 ```
 
-`ANTHROPIC_API_KEY` is server-only. Do not rename it with a `NEXT_PUBLIC_` prefix.
+`GEMINI_API_KEY` is server-only. Do not rename it with a `NEXT_PUBLIC_` prefix.
 
 ## Firebase setup
 
@@ -191,7 +189,7 @@ npx vercel@latest login
 npx vercel@latest --prod
 ```
 
-Choose Next.js and the project root when prompted. In Vercel project settings, add all Firebase variables and `ANTHROPIC_API_KEY` for the Production environment. Redeploy after adding or changing variables.
+Choose Next.js and the project root when prompted. In Vercel project settings, add all Firebase variables and `GEMINI_API_KEY` for the Production environment. Redeploy after adding or changing variables.
 
 The bill parser is deployed automatically as the Next.js route `/api/parse-bill`.
 

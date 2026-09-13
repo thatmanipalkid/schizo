@@ -47,6 +47,8 @@ export default function HostSetupPage() {
   const [discount, setDiscount] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [reading, setReading] = useState(false);
+  const [photoFiles, setPhotoFiles] = useState<{ id: string; file: File; url: string }[]>([]);
+  const [readProgress, setReadProgress] = useState(0);
   const [ocrDebugData, setOcrDebugData] = useState<BillData | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -145,17 +147,51 @@ export default function HostSetupPage() {
     }
   }
 
-  async function onPhoto(file: File | undefined) {
-    if (!file) return;
+  function addPhotos(files: FileList | null) {
+    if (!files?.length) return;
+    setPhotoFiles((current) => [
+      ...current,
+      ...Array.from(files).map((file) => ({
+        id: `${file.name}-${file.lastModified}-${Math.random()}`,
+        file,
+        url: URL.createObjectURL(file),
+      })),
+    ]);
+    setError("");
+  }
+
+  function removePhoto(photoId: string) {
+    setPhotoFiles((current) => {
+      const photo = current.find(({ id }) => id === photoId);
+      if (photo) URL.revokeObjectURL(photo.url);
+      return current.filter(({ id }) => id !== photoId);
+    });
+  }
+
+  async function confirmPhotos() {
+    if (!photoFiles.length) return;
     setReading(true);
+    setReadProgress(5);
     setError("");
     try {
-      const ocr = await extractBillData(file);
-      if (!ocr.success || !ocr.data) {
-        throw new Error(ocr.error || "Could not read bill data");
+      const extracted: BillData[] = [];
+      for (const [index, photo] of photoFiles.entries()) {
+        const ocr = await extractBillData(photo.file);
+        if (!ocr.success || !ocr.data) {
+          throw new Error(ocr.error || `Could not read photo ${index + 1}`);
+        }
+        extracted.push(ocr.data);
+        setReadProgress(Math.round(((index + 1) / photoFiles.length) * 70));
       }
-      const data = ocr.data;
+      const data: BillData = {
+        items: extracted.flatMap((result) => result.items),
+        subtotal: extracted.reduce((sum, result) => sum + (result.subtotal ?? 0), 0) || null,
+        tax: extracted.reduce((sum, result) => sum + (result.tax ?? 0), 0) || null,
+        serviceCharge: extracted.reduce((sum, result) => sum + (result.serviceCharge ?? 0), 0) || null,
+        total: extracted.reduce((sum, result) => sum + (result.total ?? 0), 0) || null,
+      };
       setOcrDebugData(data);
+      setReadProgress(82);
       const batch = writeBatch(db);
       for (const item of data.items ?? []) {
         const ref = doc(collection(db, "sessions", id, "items"));
@@ -172,6 +208,7 @@ export default function HostSetupPage() {
         billTotal: Number(data.total) || 0,
       });
       await batch.commit();
+      setReadProgress(100);
       setTax(data.tax ? String(data.tax) : "");
       setService(data.serviceCharge ? String(data.serviceCharge) : "");
       setDiscount("");
@@ -221,31 +258,71 @@ export default function HostSetupPage() {
       <p className="mb-6 text-sm text-muted">Add the bill, then open voting.</p>
 
       <div className="space-y-3">
-        <label className="flex min-h-[44px] w-full cursor-pointer items-center justify-center">
+        <div className="space-y-3">
           <UploadButton
             type="button"
             onClick={(e) => {
               e.preventDefault();
-              const input = e.currentTarget.parentElement?.querySelector('input[type="file"]') as HTMLInputElement;
-              input?.click();
+              if (photoFiles.length) {
+                void confirmPhotos();
+                return;
+              }
+              (e.currentTarget.parentElement?.querySelector('input[type="file"]') as HTMLInputElement)?.click();
             }}
             disabled={reading}
           >
-            Upload bill photo
+            {photoFiles.length ? "Confirm" : "Upload bill photo"}
           </UploadButton>
           <input
             type="file"
             accept="image/*"
+            multiple
             className="hidden"
             disabled={reading}
             onChange={(e) => {
-              const file = e.target.files?.[0];
+              addPhotos(e.target.files);
               e.target.value = "";
-              onPhoto(file);
             }}
           />
-        </label>
-        {reading ? <p className="text-sm text-muted">Reading bill...</p> : null}
+          {photoFiles.length ? (
+            <div className="grid grid-cols-3 gap-2">
+              {photoFiles.map((photo) => (
+                <div key={photo.id} className="relative aspect-square overflow-hidden rounded-lg border border-line bg-[#F7F6F1]">
+                  <img src={photo.url} alt={photo.file.name} className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    aria-label={`Remove ${photo.file.name}`}
+                    onClick={() => removePhoto(photo.id)}
+                    disabled={reading}
+                    className="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-lg leading-none text-red-700 shadow"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {photoFiles.length ? (
+            <SecondaryButton
+              type="button"
+              disabled={reading}
+              onClick={(e) => {
+                const input = e.currentTarget.parentElement?.querySelector('input[type="file"]') as HTMLInputElement;
+                input?.click();
+              }}
+            >
+              Add another photo
+            </SecondaryButton>
+          ) : null}
+        </div>
+        {reading ? (
+          <div aria-label={`Reading bill progress: ${readProgress}%`} className="space-y-1">
+            <div className="h-1 w-full overflow-hidden rounded-full bg-[#DCE9DF]">
+              <div className="h-full rounded-full bg-[#4FAE7A] transition-[width] duration-300" style={{ width: `${readProgress}%` }} />
+            </div>
+            <p className="text-sm text-muted">Reading bill...</p>
+          </div>
+        ) : null}
         {process.env.NODE_ENV === "development" && ocrDebugData ? (
           <section className="rounded-lg border border-dashed border-accent bg-accent/5 p-3 text-sm">
             <p className="mb-2 font-medium text-accent">Data in the bill</p>

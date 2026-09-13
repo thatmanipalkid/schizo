@@ -106,7 +106,8 @@ async function prepareImage(file: File) {
 
 export async function extractBillData(file: File): Promise<OcrExtractionResult> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 15_000);
+  const timeoutMs = 60_000;
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const preparedFile = await prepareImage(file);
@@ -129,7 +130,7 @@ export async function extractBillData(file: File): Promise<OcrExtractionResult> 
     return { success: true, data: result.data };
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
-      return { success: false, error: "OCR timed out after 15 seconds" };
+      return { success: false, error: "OCR timed out after 60 seconds" };
     }
     return {
       success: false,
