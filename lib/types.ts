@@ -22,7 +22,10 @@ export type ItemDoc = {
   name: string;
   price: number;
   quantity?: number;
+  category: ItemCategory;
 };
+
+export type ItemCategory = "veg" | "non-veg" | "drink" | "other";
 
 export type PersonDoc = {
   name: string;

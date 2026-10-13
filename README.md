@@ -1,280 +1,321 @@
 # thatmanipalkid
 
-`thatmanipalkid` is a lightweight, link-based restaurant bill splitter. A creator uploads or enters a bill, shares one session link, and each participant selects the items they had. The creator confirms the participant list, then everyone sees the same calculated split.
+`thatmanipalkid` is a mobile-first, link-based restaurant bill-splitting web app. A host creates a session, enters or scans a bill, and shares a link or QR code. Participants join with a display name, select the items they shared, and confirm when they are done. The host then reviews the participants and opens a live settlement view.
 
-The app does not require Google login and does not process payments. It uses Firebase Anonymous Authentication only to give each browser a backend identity that Firestore rules can verify.
+The app uses Next.js App Router, React, TypeScript, Firebase Anonymous Authentication, Cloud Firestore, and the Gemini API for bill-image extraction. It does not require Google sign-in and does not collect or transfer payments.
 
-## Features
+## Contents
 
-### Explicit navigation
+- [Requirements](#requirements)
+- [Run locally](#run-locally)
+- [Environment configuration](#environment-configuration)
+- [Firebase project setup](#firebase-project-setup)
+- [Build and diagnostics](#build-and-diagnostics)
+- [Application routes](#application-routes)
+- [End-to-end sample flow](#end-to-end-sample-flow)
+- [Bill image extraction](#bill-image-extraction)
+- [Firestore data model](#firestore-data-model)
+- [Live data and identity](#live-data-and-identity)
+- [Settlement rules](#settlement-rules)
+- [Authorization and privacy](#authorization-and-privacy)
+- [Repository layout](#repository-layout)
+- [Limitations and operational notes](#limitations-and-operational-notes)
+- [Deployment](#deployment)
 
-- Host setup has a top-left back control to return to the landing page. If items have been added, it asks before discarding the setup.
-- The join screen returns a host to host setup only while the session is still a draft. Guests return to the landing page.
-- Voting back navigation requires inline confirmation and removes the current participant and claims before returning to the landing page.
-- Settlement can return to voting only while the session is open. Once calculation has started, the back control is disabled and the screen explains that the session is already settled.
-- Navigation uses explicit routes rather than browser history, so redirects cannot send users through stale intermediate states.
+## Requirements
 
-### Anonymous sessions
+- Node.js 18.17 or newer (Node.js 20 LTS is a good default).
+- npm.
+- A Firebase project with Cloud Firestore and Anonymous Authentication enabled.
+- A Gemini API key to use bill-image extraction. Manual item entry does not depend on Gemini.
 
-- No Google account or traditional sign-up is required.
-- The creator enters their name and a restaurant/session name on the landing page.
-- Participants enter a display name through the shared session link.
-- The product name, `thatmanipalkid`, is visible on the landing page.
-- Creator and participant names are stored in Firestore in the session's `people` collection.
-- Firebase Anonymous Auth supplies the backend UID used to protect session ownership.
+The repository does not currently define a test script or include a unit/integration test suite. The available package scripts are `dev`, `build`, `start`, and `lint`.
 
-### Bill entry
+## Run locally
 
-- The creator can upload a bill image.
-- The server sends the image to Gemini for extraction.
-- Extracted line items, prices, quantities, tax, service charge, discount, and total are written to Firestore together.
-- The creator can also add, edit, and delete items manually.
-- Quantity is optional. If omitted, the item remains valid and is treated as one item for splitting.
-- Deleting an item also deletes every claim attached to that item.
-- Parsing errors are shown in the setup page instead of silently failing.
-
-### Live item selection
-
-- Participants see the current number of people in the session.
-- Each item has an inline circular check control in the same row as its name and price.
-- The entire item card is tappable, including the name, price, and claimant avatars.
-- Selected cards use an accent border and light tint for fast scanning at a table.
-- Selecting an item adds the participant to that item's split.
-- Selecting again removes the participant.
-- The item list updates live through Firestore listeners.
-- Running personal totals are intentionally hidden during selection because the participant list may still change.
-- A live `You've selected:` summary below the item list shows only this participant's selected item names and current share amounts.
-- Voting presence is refreshed every five seconds while the page is open.
-- A confirmed tab close or navigation removes a guest and their claims; backgrounded mobile tabs receive a ten-second grace period first.
-- The host periodically removes guests whose heartbeat has been stale for more than the grace period, covering abrupt browser termination where the departing tab cannot finish an async delete.
-- Claims use one deterministic document per participant/item and direct Firestore writes, so rapid taps cannot create duplicate claims; the collection listener remains the source of truth for every connected screen.
-- The page shows how many joined people have finished voting.
-- Each participant can click `I am done voting` to lock their selections.
-- A participant can click `Edit my votes` to unlock their selections and change them.
-- The host cannot proceed to calculation until every joined person, including the creator, is marked done.
-
-### Host confirmation and calculation
-
-Sessions use these states:
-
-| State | Meaning |
-| --- | --- |
-| `draft` | The creator is entering or editing the bill. Participants cannot join yet. |
-| `open` | Participants may join and select items. |
-| `calculating` | The creator confirmed the participant list. All users are sent to the calculation view. New users cannot join. |
-| `settled` | Reserved for a future finalization step. Results remain visible. |
-| `expired` | A draft or open session passed its expiry time. |
-| `cancelled` | The creator cancelled the session. |
-
-On the calculation page the creator can:
-
-- See the names of everyone who joined.
-- Remove a participant. Their claims are deleted at the same time.
-- Assign an unallocated item to a specific participant.
-- Split all unallocated items equally among existing claimants.
-- Return to editing and recalculate. Reopening clears old claims so the next calculation starts cleanly.
-- Delete the entire session from the setup page.
-
-Every participant, including the creator, can also choose **Opt out of this session**. The action requires an inline confirmation, removes that person's participant record and claims, and redirects them to a simple confirmation page. If the session is already settled, items that become unclaimed because of the opt-out are equally redistributed among the remaining claimants before the next live settlement calculation. This does not cancel the session for anyone else.
-
-The participant count on the voting page is a link for the creator to review the participant list before confirmation. Other participants cannot access host controls.
-
-### Settlement math
-
-The calculation follows a simple per-item model:
-
-1. For every item, count its unique claimants as `n`.
-2. Give every claimant exactly `item price / n` for that item.
-3. Sum those item shares for each person.
-4. Calculate each person's proportion from their item subtotal divided by the sum of all item subtotals.
-5. Apply tax, service charge, and discount using that proportion.
-6. Calculate `item subtotal + tax share + service share - discount share`.
-7. Clamp invalid or negative intermediate values so a displayed final amount can never be negative.
-8. Round each final amount to the nearest whole rupee.
-9. Apply the bill-total leftover as one adjustment to only the person with the largest amount, provided that adjustment does not make them negative.
-
-The calculation distributes:
-
-- Item subtotals according to each item's claim fractions.
-- Tax proportionally to claimed item subtotals.
-- Service charge proportionally to claimed item subtotals.
-- Discount proportionally to claimed item subtotals.
-- Rounding adjustments to keep the displayed final amounts aligned with the entered bill total.
-
-The code logs a warning when the leftover exceeds five rupees. That indicates a bill/claim mismatch rather than normal rounding.
-
-The settlement screen shows the current participant's personalized `You pay` amount first. It then lists every claimed item, its split count and share, tax, service charge, discount, and any rounding adjustment needed for the displayed lines to reconcile. A separate list shows what everyone else owes. It also displays the computed total for the bill.
-
-The results include an `Items split by` section showing each item followed by the names of all participants who claimed it. The host additionally sees `Total from everyone`, which is the sum of all displayed participant amounts and should match the computed bill total.
-
-The worked verification scenario produces:
-
-```text
-Person A: ₹299
-Person B: ₹299
-Person C: ₹379
-Person D: ₹81
-Total: ₹1058
-```
-
-All four amounts are positive and the total matches the bill total exactly.
-
-No payment request, UPI deep link, payment gateway, or payment confirmation is part of the app.
-
-## Local development
-
-Requirements:
-
-- Node.js 18 or newer
-- A Firebase project with Firestore
-- Firebase Anonymous Authentication enabled
-- A Gemini API key for bill image parsing
-
-Install and run:
+From the repository root:
 
 ```bash
-npm install
+npm ci
+cp .env.example .env.local
+# Edit .env.local and enter the values for your Firebase project and Gemini key.
 npm run dev
 ```
 
-Open `http://localhost:3000` unless that port is already in use.
+Open [http://localhost:3000](http://localhost:3000). If the port is already occupied, Next.js may offer another local port; use the URL printed by the development server.
 
-Build verification:
+`npm ci` installs the exact dependency versions recorded in `package-lock.json`. Use `npm install` when intentionally changing dependencies.
+
+## Environment configuration
+
+Create `.env.local` in the project root. `.env.local` is ignored by Git; do not commit it.
+
+```dotenv
+NEXT_PUBLIC_FIREBASE_API_KEY=
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+NEXT_PUBLIC_FIREBASE_APP_ID=
+GEMINI_API_KEY=
+```
+
+The Firebase values come from the Firebase project's registered web app. `GEMINI_API_KEY` is read only by the server route at `/api/ocr`. It must not be renamed to a `NEXT_PUBLIC_` variable or embedded in client code. The Firebase web-app configuration is delivered to the browser by design; restrict the Firebase API key using Google's API restrictions where practical, and rely on Firestore rules for data authorization.
+
+Next.js inlines `NEXT_PUBLIC_*` values during the build. Configure them in the environment that runs `npm run build`, and rebuild/redeploy after changing them. Missing Firebase values can allow compilation to proceed but the application will not be able to initialize a working Firebase client. Bill parsing returns an explicit missing-key response when `GEMINI_API_KEY` is unavailable.
+
+## Firebase project setup
+
+1. Create or select a Firebase project.
+2. Create a Cloud Firestore database.
+3. In **Authentication → Sign-in method**, enable **Anonymous** sign-in.
+4. Register a web app in Firebase project settings and copy its configuration into `.env.local`.
+5. Apply the contents of [`firestore.rules`](./firestore.rules) in **Firestore Database → Rules** in the Firebase console.
+6. Restart the local Next.js process after changing `.env.local`.
+
+The repository currently contains `firestore.rules` but no Firebase CLI configuration file. To deploy the rules with the Firebase CLI, first configure the CLI for the project and make sure its `firebase.json` maps Firestore rules to this file. Otherwise, paste the rules into the Firebase console.
+
+The client signs users in anonymously through `ensureAnonymousAuth()` before it starts Firestore listeners or writes session data. No Google OAuth provider is used.
+
+## Build and diagnostics
+
+Available project commands:
+
+```bash
+npm run dev       # Local development server
+npm run lint      # Next.js ESLint checks
+npm run build     # Production Next.js build
+npm run start     # Serve an already-built production app
+npx tsc --noEmit  # TypeScript type-check without emitting files
+```
+
+Run the production build from the project root:
 
 ```bash
 npm run build
 ```
 
-## Environment variables
-
-Create `.env.local` in the project root. Never commit this file.
-
-```env
-NEXT_PUBLIC_FIREBASE_API_KEY=...
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=...
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=...
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=...
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
-NEXT_PUBLIC_FIREBASE_APP_ID=...
-GEMINI_API_KEY=...
-```
-
-`GEMINI_API_KEY` is server-only. Do not rename it with a `NEXT_PUBLIC_` prefix.
-
-## Firebase setup
-
-1. Create or select a Firebase project.
-2. Create a Firestore database.
-3. Enable **Authentication > Sign-in method > Anonymous**.
-4. Register a web app and copy its configuration into `.env.local`.
-5. Deploy the rules in `firestore.rules`.
-
-With the Firebase CLI:
+For a useful failure report, capture the complete output from the first error through the final exit code. The first compiler or configuration error is usually more informative than subsequent errors. Check the environment and installation when diagnosing:
 
 ```bash
-npm install -g firebase-tools
-firebase login
-firebase use YOUR_FIREBASE_PROJECT_ID
-firebase deploy --only firestore:rules
+node --version
+npm --version
+npm ci
+npx tsc --noEmit
+npm run lint
+npm run build
 ```
 
-The app calls `signInAnonymously` automatically before it subscribes to session data. No Google provider is needed.
+Notes when investigating a build failure:
 
-## Vercel deployment
+- Confirm the terminal is in the repository root and the installed Node version satisfies the requirement above.
+- If `npm ci` fails, retain the full npm error. Do not delete or regenerate the lockfile as a first response.
+- Separate TypeScript/lint errors from Next.js build errors. `npx tsc --noEmit` and `npm run lint` are distinct checks; a passing type check does not prove the production bundle builds.
+- If the build fails during page-data collection or prerendering, inspect the stack trace for modules that access browser-only APIs (`window`, `document`, or browser storage) during server rendering.
+- Check that required `NEXT_PUBLIC_FIREBASE_*` values exist in the build environment. Ensure server-only keys such as `GEMINI_API_KEY` are not accidentally exposed to the client.
+- If a command appears to hang, record whether it prints any output, how long it waits, the process exit status, and whether another dev/build process is already running. A stalled process without an error is not enough evidence to identify a code defect.
 
-The Vercel CLI does not need to be installed globally:
+No cause for a build failure is documented here because a specific `npm run build` error and stack trace are needed to determine the cause.
 
-```bash
-npx vercel@latest login
-npx vercel@latest --prod
-```
+## Application routes
 
-Choose Next.js and the project root when prompted. In Vercel project settings, add all Firebase variables and `GEMINI_API_KEY` for the Production environment. Redeploy after adding or changing variables.
+| Route | Responsibility |
+| --- | --- |
+| `/` | Create a draft session and register the creator as the host. |
+| `/session/[id]/host` | Host bill setup: manual item editing, bill image upload, tax/service/discount, and opening the session. |
+| `/session/[id]/join` | Show the session join URL/QR code and let a guest join while the session is open. The host lands here after opening a draft. |
+| `/session/[id]/vote` | Live item claims, participant presence, and voting completion. |
+| `/session/[id]/settle` | Host participant review and calculation controls; live per-person settlement for all participants. |
+| `/session/[id]/left` | Confirmation after opting out of a session. |
+| `/api/ocr` | Server route that validates the request, calls Gemini 2.5 Flash, and normalizes bill data. |
+| `/api/parse-bill` | Separate text-extraction parsing endpoint. The current host image-upload flow calls `/api/ocr`, not this route. |
 
-The bill parser is deployed automatically as the Next.js route `/api/parse-bill`.
+The session status is stored in Firestore:
 
-## Data model
+| Status | Meaning in the current UI |
+| --- | --- |
+| `draft` | Host is setting up the bill. Guests cannot join yet. |
+| `open` | Guests can join and participants can claim items. |
+| `calculating` | Host has confirmed the participant list; settlement results are shown and unclaimed items can be allocated. |
+| `settled` | Also renders the calculation view. The normal flow currently opens `calculating`; it does not need to transition to `settled`. |
+| `expired` | The shared session hook presents an expired state when a draft/open session's `expiresAt` has passed. |
+| `cancelled` | The session is cancelled and its regular flows are blocked. |
+
+## End-to-end sample flow
+
+This is a manual acceptance scenario for exercising the main user journey after Firebase is configured:
+
+1. On `/`, enter a host name such as `Asha` and a restaurant name such as `Cafe Example`; create the session.
+2. On the host setup page, add `Masala dosa` at ₹180 and `Paneer tikka` at ₹320. These values represent line totals (see [Price and quantity semantics](#price-and-quantity-semantics)).
+3. Enter ₹50 tax, ₹30 service charge, and ₹20 discount. The displayed bill total should be ₹560.
+4. Open the session. The session status changes from `draft` to `open`, and the host is directed to the join page.
+5. Open the shared join link in a second browser/profile. Join as `Bala`.
+6. As the host, claim `Masala dosa`. As Bala, claim both items. Each user selects **See split** when finished.
+7. Back on the host, review the participant list. When every participant—including the host—has marked voting complete, confirm the calculation.
+8. Both participants should see a live result. With these claims and charges, the rounded shares should total ₹560: Asha ₹126 and Bala ₹434.
+
+This scenario assumes the host and guest are separate anonymous-authenticated browser identities. It tests the UI and Firestore interaction end to end; it is not an automated test and requires working Firebase configuration/rules.
+
+## Bill image extraction
+
+The current host upload flow is implemented by [`lib/ocr.ts`](./lib/ocr.ts) and [`app/api/ocr/route.ts`](./app/api/ocr/route.ts):
+
+1. The browser accepts image files, including PNG, JPEG, WebP, HEIC, and HEIF.
+2. HEIC/HEIF is converted to JPEG using `heic2any` when possible, with a browser-native decode fallback.
+3. Images are resized so the longest side is at most 2400 pixels and encoded as JPEG.
+4. The browser sends base64 image data to `/api/ocr`. Each selected image is extracted sequentially; the results are combined.
+5. The server sends the image and a constrained JSON extraction prompt to Gemini 2.5 Flash using the server-only `GEMINI_API_KEY`.
+6. The response is normalized into item rows (`name`, `quantity`, `price`) and nullable subtotal/tax/service/total fields.
+7. After all selected images succeed, one Firestore batch replaces the existing bill items and updates tax, service charge, discount, and bill total. Discount is reset to zero by this upload operation.
+8. The host reviews the extracted data and the visible total, edits as needed, then opens voting.
+
+The OCR prompt defines each item's `price` as the **amount for the whole line**, not the unit rate. If more than one photo is selected, all extracted rows and monetary amounts are summed; avoid selecting overlapping images of the same receipt section or rows may be duplicated. A failed image extraction prevents the batch update, and the page shows an error. Extraction is not a substitute for checking the original receipt.
+
+The route currently logs the raw model response and the client logs normalized bill data for debugging. These logs may contain item names and prices; review/remove such logging before using production logging systems with stricter data-minimization requirements.
+
+## Firestore data model
 
 ```text
 sessions/{sessionId}
-  restaurantName
-  createdAt
-  expiresAt
-  status
-  hostUid
-  taxAmount
-  serviceChargeAmount
-  discountAmount
-  billTotal
+  restaurantName: string
+  createdAt: timestamp
+  expiresAt: timestamp
+  status: draft | open | calculating | settled | expired | cancelled
+  hostUid: Firebase anonymous-auth UID
+  taxAmount: number
+  serviceChargeAmount: number
+  discountAmount: number
+  billTotal: number
 
 sessions/{sessionId}/people/{personId}
-  name
-  joinedAt
-  isHost
-  authUid
-  isDoneVoting
-  lastSeen
+  name: string
+  joinedAt: timestamp
+  isHost: boolean
+  authUid: Firebase anonymous-auth UID
+  isDoneVoting: boolean
+  lastSeen: timestamp
 
 sessions/{sessionId}/items/{itemId}
-  name
-  price
-  quantity             optional
+  name: string
+  price: number                 # whole line amount
+  quantity: number | optional  # informational; not multiplied into price
+  category: veg | non-veg | drink | other
 
 sessions/{sessionId}/claims/{claimId}
-  itemId
-  personId
-  shareFraction
+  itemId: string
+  personId: string
+  shareFraction: number
 ```
 
-The browser keeps the session-specific person ID in tab-scoped session storage so a refresh in the same tab preserves the participant while a different tab starts fresh. The join form never reads a prior participant name. The `Not you? Join as someone else` action clears the current tab's identity and reveals a blank form. Legacy local-storage entries are ignored and removed. Firestore remains the source of truth for the session, participant, item, claim, and host UID records.
+The TypeScript interfaces are in [`lib/types.ts`](./lib/types.ts). Item categories and name classification are in [`lib/itemCategory.ts`](./lib/itemCategory.ts). Claims are stored as separate documents under each session, not nested into item/person records.
 
-## Security model
+## Live data and identity
 
-Firebase Anonymous Auth is deliberately used instead of Google login. The Firestore rules then enforce:
+[`lib/useSessionLive.ts`](./lib/useSessionLive.ts) subscribes to the session document and its `items`, `people`, and `claims` subcollections with Firestore `onSnapshot` listeners. Connected pages therefore update as other participants join, claim items, finish voting, or when the host changes the session status.
 
-- Only an authenticated UID can read session data.
-- Only the UID in `sessions/{sessionId}.hostUid` can edit or delete the session and its items.
-- Participants can create a person record using their own authenticated UID while the session is open.
-- Participants can modify only their own claims.
-- The host can remove people and clean up their claims.
+[`lib/identity.ts`](./lib/identity.ts) stores a session-specific `personId`, display name, and host UI flag in `window.sessionStorage`. A refresh in the same tab retains that browser's participant identity; a new tab/session-storage context may require joining again. Firestore's `authUid` and `hostUid` are the backend identity checks; the locally stored `isHost` flag is not an authorization credential.
 
-This is stronger than trusting an `isHost` flag in local storage. It still is not the same as a permanent account system: clearing browser storage or changing devices creates a new anonymous identity.
+The voting page updates `lastSeen` approximately every five seconds while open. The UI has presence-related cleanup behavior, but clients can close abruptly or go offline, so presence should not be treated as a durable attendance record.
 
-## Expiry behavior
+## Settlement rules
 
-New sessions receive a two-hour `expiresAt` timestamp. The shared session hook derives `expired` for draft and open sessions once the timestamp has passed. Expired sessions are read-only from the UI and cannot be joined.
+The calculation lives in [`lib/settlement.ts`](./lib/settlement.ts) and is recomputed from the current live items, people, claims, and session charges.
 
-Expiry is currently lazy: there is no scheduled backend job deleting expired documents. This avoids deleting data unexpectedly and keeps the setup simple. A scheduled Cloud Function can be added later if automatic cleanup is required.
+For each item, the implementation counts distinct valid claimant documents and divides the item's line price equally between those claimants. A person's raw item subtotal is the sum of those item shares. The current fee/discount behavior is:
 
-## Important migration note
+- Tax is divided equally among all current people.
+- Service charge is divided equally among all current people.
+- Discount is allocated in proportion to each person's raw item subtotal.
+- Each final amount is clamped at zero and rounded to the nearest whole rupee.
+- The difference between the calculated bill total and the sum of rounded person totals is assigned to the person with the largest total, if that adjustment does not make their total negative.
+- The calculation warns in the console if the leftover exceeds five rupees. A remaining mismatch can occur when an adjustment would make the selected person's amount negative.
 
-Sessions created before `hostUid`, `expiresAt`, and `authUid` were added do not have the new identity fields. After deploying the stricter Firestore rules, those old sessions may no longer be usable. Finish or manually migrate old sessions before applying the rules in production, or temporarily keep a migration-only rule while backfilling the fields.
+The bill total used by host setup is:
 
-## Known edge cases and current behavior
+```text
+max(0, sum(item line prices) + tax + service charge - discount)
+```
 
-- Two users can toggle the same item at nearly the same time. Each toggle is an independent claim-document write, and the calculation derives equal shares from the live claimant count, avoiding cross-user claim updates. A future transaction or callable backend function could make duplicate toggles and conflict handling fully atomic.
-- An item with no claimant appears as unallocated on the calculation page and must be assigned or split by the host.
-- If every item is unclaimed, there are no claimants to receive an equal split.
-- Rounding can produce small differences; the settlement code assigns the remainder to the largest claimant.
-- Invalid OCR prices are converted to zero and should be reviewed by the creator.
-- Anthropic failures can come from missing keys, exhausted credits, unsupported models, rate limits, network errors, or malformed model JSON.
-- Bill images are compressed in the browser before upload. Very large, blurry, rotated, or low-contrast receipts may still parse incorrectly.
-- Duplicate display names are allowed. Person IDs, not names, identify claims.
-- A browser refresh preserves identity only while its local storage remains intact.
-- Anonymous auth persistence and Firestore listeners require browser storage and network access.
-- The current client-side batch deletion helper is suitable for normal sessions but should be chunked if a session grows beyond Firestore's batch write limit.
-- A user who has already joined can keep an old voting tab open, but the shared status listener redirects them once calculation begins.
-- A session link can be forwarded to anyone. The host should delete or cancel a session if the link is shared accidentally.
-- The Firestore rules protect authenticated ownership, but a user with access to a session can still read participant names and bill data by design.
-- There is no permanent account recovery, cross-device participant identity, audit log, or invitation list.
+The OCR response includes a receipt `total`, but opening the session recalculates `billTotal` from the editable item rows and charges. If the printed receipt includes an additional fee, round-off, or other amount not represented in those fields, reconcile the values manually before opening.
 
-## Suggested future improvements
+### Price and quantity semantics
 
-1. Move claim updates and settlement finalization into trusted server-side callable functions or transactions.
-2. Add a scheduled cleanup job for expired sessions.
-3. Validate OCR output with a schema and require creator review before opening voting.
-4. Add an explicit finalization state after the host finishes reallocating items.
-5. Chunk large recursive deletes and add a server-side delete function.
-6. Add a short host-only session token or permanent authentication if stronger identity is needed.
-7. Add automated tests for settlement rounding, concurrent claims, expiry, and participant removal.
-8. Add Firebase Emulator Suite tests for the Firestore rules.
+`price` is the whole item's **line amount**. The settlement helper intentionally does not multiply by `quantity`. For example, if the receipt says quantity 2 and line amount ₹300, save `price: 300` and `quantity: 2`; the bill contributes ₹300, not ₹600. The optional quantity is displayed as receipt/context data and does not alter the split. Entering a unit price instead of a line amount will understate the bill.
+
+### Unclaimed items
+
+An item with no claims is excluded from per-person item subtotals and reported as unclaimed. In the calculation view, the host can assign individual unclaimed items to a participant or split all unclaimed items among the existing claimants. If there are no claimants, an equal split cannot be created. Settlement results are live, so they recalculate after claim/assignment writes.
+
+The `shareFraction` property is written on claims for compatibility with split operations, but the current calculation divides equally by the number of valid claimant documents; it does not calculate weighted shares from `shareFraction`.
+
+## Authorization and privacy
+
+[`firestore.rules`](./firestore.rules) is the authorization boundary for client Firestore operations. It requires Firebase authentication to read session data, uses `hostUid` to authorize host session/item operations, requires a participant record to be associated with the caller's `authUid` for participant claim writes, and permits host participant cleanup.
+
+Important consequences:
+
+- Anonymous Authentication is not a permanent user account. Clearing browser state or switching devices can produce a new UID and does not provide account recovery.
+- A client-side route check or session-storage value is for UX only; it is not a security boundary.
+- A user who knows a session ID and can authenticate can read that session's Firestore data under the current rules. Treat the shared session URL as sensitive and only share it with intended participants.
+- Participant names, bill items, claims, and computed settlement details are visible to signed-in clients with access to the session by design.
+- The rules do not provide per-field schema validation or rate limiting. Review and test rule changes in the Firebase Rules simulator or Emulator Suite before deploying them.
+- Session creation/profile creation is performed by client code. Protect the Firebase project with appropriate quotas and monitor unexpected usage.
+- Do not store payment credentials or secrets in Firestore documents or client-visible environment variables.
+
+## Repository layout
+
+```text
+app/
+  page.tsx                      # Session creation
+  layout.tsx                    # Root document and metadata
+  api/
+    ocr/route.ts                 # Gemini image extraction API
+    parse-bill/route.ts          # Text-based bill parser endpoint
+  session/[id]/
+    host/page.tsx                # Draft bill setup
+    join/page.tsx                # QR/link and participant join
+    vote/page.tsx                # Live claims and completion
+    settle/page.tsx              # Host review and settlement display
+    left/page.tsx                # Opt-out confirmation
+components/
+  ui.tsx                         # Shared UI controls and layout primitives
+lib/
+  firebase.ts                    # Firebase app, Auth, Firestore initialization
+  identity.ts                    # Session-scoped browser identity
+  useSessionLive.ts               # Firestore snapshot subscriptions
+  sessionWrites.ts                # Presence, claims, status, and cleanup writes
+  ocr.ts                         # Browser-side image prep and OCR client
+  settlement.ts                  # Bill/participant settlement calculations
+  itemCategory.ts                # Food category values, matching, sorting
+  format.ts                      # Formatting and numeric input helpers
+  types.ts                       # Shared domain types
+firestore.rules                  # Firestore client authorization rules
+.env.example                     # Environment variable names
+```
+
+The text parser at `/api/parse-bill` accepts extracted text; it is separate from the Gemini image route and is not called by the current host upload component.
+
+## Limitations and operational notes
+
+- There is no payment gateway, UPI handoff, payment collection, or payment confirmation.
+- There is no automated test script or test suite in the package configuration at this time.
+- Session expiry is evaluated lazily by the client when it observes the session; there is no scheduled server cleanup job.
+- OCR output is best-effort. Blurry, rotated, cropped, low-contrast, or overlapping receipt photos can produce missing, duplicated, or incorrect rows. Verify extracted amounts manually.
+- Multiple uploaded photos are combined by summing their extracted line items and totals. Duplicate coverage is not automatically detected.
+- The host upload applies its item/session writes in one Firestore batch. Firestore imposes a maximum number of writes per batch; very large receipts can exceed that limit.
+- Manual add rejects a blank item name or a price that parses to zero or less. Numeric parsing and edit inputs are otherwise intentionally lightweight; check amounts, quantities, tax, service, and discount before opening.
+- The cleanup helpers use client-side batches and are intended for normal small sessions, not arbitrarily large collections.
+- Duplicate display names are allowed; participant document IDs distinguish users.
+- Network access, browser storage, Firebase Auth, Firestore rules, and correct environment configuration are required for a full session.
+
+## Deployment
+
+Deploy as a Next.js application (for example, on Vercel). Configure all six `NEXT_PUBLIC_FIREBASE_*` variables in the deployment environment before the build. Configure `GEMINI_API_KEY` as a server-side environment variable for deployments that enable image extraction. Redeploy after changing build-time public environment values.
+
+Before release:
+
+1. Run `npm ci`, `npx tsc --noEmit`, `npm run lint`, and `npm run build` in the deployment-equivalent environment.
+2. Apply and review Firestore rules against the intended Firebase project.
+3. Run the sample flow in [End-to-end sample flow](#end-to-end-sample-flow) with separate host and guest browser identities.
+4. Upload a representative receipt and compare each extracted line amount, tax, service charge, and total to the original.
+5. Confirm the session link and the server-side Gemini key are handled as described above.

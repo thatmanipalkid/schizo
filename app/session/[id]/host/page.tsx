@@ -5,18 +5,23 @@ import { useParams, useRouter } from "next/navigation";
 import {
   addDoc,
   collection,
-  deleteDoc,
   doc,
   serverTimestamp,
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
-import { db, auth } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
 import { getIdentity } from "@/lib/identity";
 import { extractBillData, type BillData } from "@/lib/ocr";
 import { formatRupee, parseNumber } from "@/lib/format";
 import { computeBillTotal, itemTotal } from "@/lib/settlement";
 import { useSessionLive } from "@/lib/useSessionLive";
+import {
+  ITEM_CATEGORIES,
+  ITEM_CATEGORY_STYLES,
+  classifyItem,
+  sortItemsByCategory,
+} from "@/lib/itemCategory";
 import { deleteItemAndClaims, deleteSession } from "@/lib/sessionWrites";
 import {
   Field,
@@ -42,6 +47,7 @@ export default function HostSetupPage() {
   const [newName, setNewName] = useState("");
   const [newPrice, setNewPrice] = useState("");
   const [newQty, setNewQty] = useState("");
+  const [newCategory, setNewCategory] = useState<"veg" | "non-veg" | "drink" | "other">("other");
   const [tax, setTax] = useState("");
   const [service, setService] = useState("");
   const [discount, setDiscount] = useState("");
@@ -57,6 +63,7 @@ export default function HostSetupPage() {
   const [editName, setEditName] = useState("");
   const [editPrice, setEditPrice] = useState("");
   const [editQty, setEditQty] = useState("");
+  const [editCategory, setEditCategory] = useState<"veg" | "non-veg" | "drink" | "other">("other");
 
   useEffect(() => {
     setIdentityState(getIdentity(id));
@@ -72,6 +79,18 @@ export default function HostSetupPage() {
     setDiscount(session.discountAmount ? String(session.discountAmount) : "");
     setHydrated(true);
   }, [session, hydrated]);
+
+  // Redirect away once the session is no longer a draft (host only).
+  useEffect(() => {
+    if (!session || !identityReady || !identity?.isHost) return;
+    if (
+      session.status !== "draft" &&
+      session.status !== "cancelled" &&
+      session.status !== "expired"
+    ) {
+      router.replace(`/session/${id}/join`);
+    }
+  }, [session, identity, identityReady, id, router]);
 
   if (loading || !identityReady) return <Screen><StatusText>Loading session…</StatusText></Screen>;
   if (missing || !session) {
@@ -91,7 +110,6 @@ export default function HostSetupPage() {
     );
   }
   if (session.status !== "draft") {
-    router.replace(`/session/${id}/join`);
     return <Screen><StatusText>Opening session…</StatusText></Screen>;
   }
 
@@ -101,6 +119,7 @@ export default function HostSetupPage() {
   }
 
   const computedItemsTotal = items.reduce((sum, item) => sum + itemTotal(item), 0);
+  const orderedItems = sortItemsByCategory(items);
   const computedTotal = computeBillTotal(
     items,
     parseNumber(tax),
@@ -117,17 +136,20 @@ export default function HostSetupPage() {
     await addDoc(collection(db, "sessions", id, "items"), {
       name,
       price,
+      category: newCategory,
       ...(newQty.trim() ? { quantity } : {}),
     });
     setNewName("");
     setNewPrice("");
     setNewQty("");
+    setNewCategory("other");
   }
 
   async function saveEdit(itemId: string) {
     await updateDoc(doc(db, "sessions", id, "items", itemId), {
       name: editName.trim(),
       price: parseNumber(editPrice),
+      category: editCategory,
       ...(editQty.trim() ? { quantity: parseNumber(editQty) } : {}),
     });
     setEditingId(null);
@@ -223,6 +245,7 @@ export default function HostSetupPage() {
           name: item.name || "Item",
           price: Number(item.price) || 0,
           quantity: Number(item.quantity) || 1,
+          category: classifyItem(item.name || ""),
         });
       }
       batch.update(doc(db, "sessions", id), {
@@ -375,7 +398,11 @@ export default function HostSetupPage() {
           <Field
             label="Item name"
             value={newName}
-            onChange={(e) => setNewName(e.target.value)}
+            onChange={(e) => {
+              setNewName(e.target.value);
+              const guess = classifyItem(e.target.value);
+              if (guess !== "other") setNewCategory(guess);
+            }}
           />
           <div className="grid grid-cols-2 gap-3">
             <Field
@@ -393,6 +420,18 @@ export default function HostSetupPage() {
               className="font-mono"
             />
           </div>
+          <label className="block text-sm font-medium text-ink">
+            Food type
+            <select
+              value={newCategory}
+              onChange={(e) => setNewCategory(e.target.value as typeof newCategory)}
+              className="mt-1 min-h-[42px] w-full rounded-lg border border-line bg-white px-3 text-base"
+            >
+              {ITEM_CATEGORIES.map((category) => (
+                <option key={category.value} value={category.value}>{category.label}</option>
+              ))}
+            </select>
+          </label>
           <SecondaryButton type="submit">+ Add</SecondaryButton>
         </form>
       </div>
@@ -401,14 +440,18 @@ export default function HostSetupPage() {
         {items.length === 0 ? (
           <li className="py-4 text-sm text-muted">No items yet.</li>
         ) : (
-          items.map((item) => (
-            <li key={item.id} className="py-3">
+          orderedItems.map((item) => (
+            <li key={item.id} className={`my-2 rounded-lg border p-3 ${ITEM_CATEGORY_STYLES[item.category]}`}>
               {editingId === item.id ? (
                 <div className="space-y-2">
                   <Field
                     label="Name"
                     value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
+                    onChange={(e) => {
+                      setEditName(e.target.value);
+                      const guess = classifyItem(e.target.value);
+                      if (guess !== "other") setEditCategory(guess);
+                    }}
                   />
                   <div className="grid grid-cols-2 gap-3">
                     <Field
@@ -426,6 +469,18 @@ export default function HostSetupPage() {
                       className="font-mono"
                     />
                   </div>
+                  <label className="block text-sm font-medium text-ink">
+                    Food type
+                    <select
+                      value={editCategory}
+                      onChange={(e) => setEditCategory(e.target.value as typeof editCategory)}
+                      className="mt-1 min-h-[42px] w-full rounded-lg border border-line bg-white px-3 text-base"
+                    >
+                      {ITEM_CATEGORIES.map((category) => (
+                        <option key={category.value} value={category.value}>{category.label}</option>
+                      ))}
+                    </select>
+                  </label>
                   <div className="grid grid-cols-2 gap-3">
                     <PrimaryButton type="button" onClick={() => saveEdit(item.id)}>
                       Save
@@ -439,8 +494,9 @@ export default function HostSetupPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-base font-medium">{item.name}</p>
+                    <p className="text-xs font-medium text-muted">{ITEM_CATEGORIES.find((category) => category.value === item.category)?.label}</p>
                     <p className="text-sm text-muted">
-                      <span className="font-mono font-bold text-[#2F6E5E]">₹{item.price}</span> · qty <span className="font-mono">{item.quantity}</span>
+                      <span className="font-mono font-bold text-[#2F6E5E]">₹{item.price}</span> · qty <span className="font-mono">{item.quantity ?? 1}</span>
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -451,7 +507,8 @@ export default function HostSetupPage() {
                         setEditingId(item.id);
                         setEditName(item.name);
                         setEditPrice(String(item.price));
-                        setEditQty(String(item.quantity));
+                        setEditQty(item.quantity != null ? String(item.quantity) : "");
+                        setEditCategory(item.category);
                       }}
                     >
                       Edit

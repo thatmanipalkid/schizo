@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { clearIdentity, getIdentity } from "@/lib/identity";
 import { formatRupee } from "@/lib/format";
 import { computeSettlement } from "@/lib/settlement";
+import { ITEM_CATEGORIES, ITEM_CATEGORY_STYLES, sortItemsByCategory } from "@/lib/itemCategory";
 import {
   assignItem,
   deletePerson,
@@ -184,7 +185,10 @@ export default function SettlePage() {
           <ul className="space-y-1 text-sm text-muted">
             {people.map((person) => (
               <li key={person.id} className="flex items-center justify-between gap-2">
-                <span>{person.name}{person.isHost ? " (creator)" : ""}</span>
+                <span className="min-w-0 truncate">{person.name}{person.isHost ? " (creator)" : ""}</span>
+                <span className={`shrink-0 text-xs font-medium ${person.isDoneVoting ? "text-[#24734A]" : "text-[#A34B3E]"}`}>
+                  {person.isDoneVoting ? "Done voting ✓" : "Still voting"}
+                </span>
                 {!person.isHost ? <button type="button" disabled={busy} onClick={() => removeParticipant(person.id)} className="text-red-700">Remove</button> : null}
               </li>
             ))}
@@ -387,15 +391,17 @@ function ItemSplitDetails({
   people,
   claims,
 }: {
-  items: { id: string; name: string }[];
+  items: { id: string; name: string; category: "veg" | "non-veg" | "drink" | "other" }[];
   people: { id: string; name: string }[];
   claims: { itemId: string; personId: string }[];
 }) {
+  const orderedItems = sortItemsByCategory(items);
+
   return (
     <section className="mt-8">
       <h2 className="mb-3 text-sm font-medium text-muted">Items split by</h2>
       <ul className="divide-y divide-line border-y border-line">
-        {items.map((item) => {
+        {orderedItems.map((item) => {
           const names = Array.from(
             new Set(
               claims
@@ -405,8 +411,13 @@ function ItemSplitDetails({
             )
           );
           return (
-            <li key={item.id} className="py-3 text-sm">
-              <p className="font-medium">{item.name}</p>
+            <li key={item.id} className={`my-2 rounded-lg border p-3 text-sm ${ITEM_CATEGORY_STYLES[item.category]}`}>
+              <p className="font-medium">
+                {item.name}
+                <span className="ml-2 text-xs font-normal text-muted">
+                  {ITEM_CATEGORIES.find((category) => category.value === item.category)?.label}
+                </span>
+              </p>
               <p className="mt-1 text-muted">
                 {names.length > 0 ? names.join(", ") : "Unallocated"}
               </p>

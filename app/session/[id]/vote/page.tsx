@@ -6,6 +6,11 @@ import { useParams, useRouter } from "next/navigation";
 import { clearIdentity, getIdentity } from "@/lib/identity";
 import { initials, formatRupee } from "@/lib/format";
 import {
+  ITEM_CATEGORIES,
+  ITEM_CATEGORY_STYLES,
+  sortItemsByCategory,
+} from "@/lib/itemCategory";
+import {
   optOutPerson,
   setSessionStatus,
   setVotingDone,
@@ -92,12 +97,13 @@ export default function VotePage() {
   const me = people.find((person) => person.id === identity.personId);
   const doneCount = people.filter((person) => person.isDoneVoting).length;
   const everyoneDone = people.length > 0 && doneCount === people.length;
+  const orderedItems = sortItemsByCategory(items);
 
   async function onToggle(itemId: string) {
     const me = identity && people.find((person) => person.id === identity.personId);
     if (!identity || !session || session.status === "settled") return;
     if (me?.isDoneVoting) {
-      setInlineError("You marked yourself done. Toggle 'I'm done voting' off first to make changes.");
+      setInlineError("You marked yourself done. Go back to voting first to make changes.");
       window.setTimeout(() => setInlineError(""), 4000);
       return;
     }
@@ -145,6 +151,71 @@ export default function VotePage() {
     } finally {
       setPendingDone(false);
     }
+  }
+
+  if (me?.isDoneVoting) {
+    return (
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col bg-white px-4 py-6">
+        <BackButton onClick={() => setConfirmLeave((current) => !current)} disabled={pendingDone} />
+        <BrandHeader />
+        {confirmLeave ? (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3">
+            <p className="text-sm text-red-800">
+              Leave this session? You can rejoin with the same link.
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                disabled={pendingDone}
+                onClick={leaveSession}
+                className="min-h-[42px] rounded-lg bg-red-700 px-3 text-sm font-medium text-white"
+              >
+                Leave session
+              </button>
+              <button
+                type="button"
+                disabled={pendingDone}
+                onClick={() => setConfirmLeave(false)}
+                className="min-h-[42px] rounded-lg border border-line bg-white px-3 text-sm text-ink"
+              >
+                Stay
+              </button>
+            </div>
+          </div>
+        ) : null}
+        <div className="flex flex-1 flex-col items-center justify-center pb-12 text-center">
+          <div
+            aria-label="Voting complete"
+            className="mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-[#EAF6EE] text-6xl font-semibold text-[#24734A]"
+          >
+            ✓
+          </div>
+          <h1 className="text-xl font-semibold">Thanks, {me.name}!</h1>
+          <p className="mt-3 max-w-xs text-sm leading-6 text-muted">
+            We&apos;ll calculate the split after everyone has voted. Please wait.
+          </p>
+          <p className="mt-3 text-sm font-medium text-accent">
+            {doneCount} of {people.length} people are done voting
+          </p>
+          <button
+            type="button"
+            disabled={pendingDone}
+            onClick={onDone}
+            className="mt-8 min-h-[46px] w-full rounded-lg border border-accent bg-white px-4 text-sm font-medium text-accent"
+          >
+            {pendingDone ? "Returning…" : "Back to voting"}
+          </button>
+          {identity.isHost ? (
+            <Link
+              href={`/session/${id}/settle`}
+              className="mt-3 flex min-h-[44px] items-center justify-center text-sm font-medium text-accent"
+            >
+              Review participants
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -222,7 +293,7 @@ export default function VotePage() {
         ) : null}
 
         <ul className="space-y-3">
-          {items.map((item) => {
+          {orderedItems.map((item) => {
             const itemClaims = claims.filter((c) => c.itemId === item.id);
             const n = itemClaims.length;
             const claimedByMe = itemClaims.some(
@@ -249,10 +320,10 @@ export default function VotePage() {
                     onToggle(item.id);
                   }
                 }}
-                className={`rounded-lg border p-3 transition-colors ${
+                className={`rounded-lg border p-3 transition-colors ${ITEM_CATEGORY_STYLES[item.category]} ${
                   claimedByMe
-                    ? "border-accent bg-accent/5"
-                    : "border-line bg-white"
+                    ? "border-accent ring-1 ring-accent"
+                    : ""
                 } ${canEdit ? "cursor-pointer" : "cursor-default opacity-75"}`}
               >
                 <div className="flex items-center gap-3">
@@ -268,6 +339,9 @@ export default function VotePage() {
                   </span>
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{item.name}</p>
+                    <p className="text-xs font-medium text-muted">
+                      {ITEM_CATEGORIES.find((category) => category.value === item.category)?.label}
+                    </p>
                     <p className="text-base font-semibold font-mono text-[#2F6E5E]">{formatRupee(item.price)}</p>
                   </div>
                 </div>
@@ -300,7 +374,7 @@ export default function VotePage() {
             (claim) => claim.itemId === item.id && claim.personId === identity.personId
           )) ? (
             <ul className="space-y-2 text-sm text-muted">
-              {items.map((item) => {
+              {orderedItems.map((item) => {
                 const selected = claims.some(
                   (claim) => claim.itemId === item.id && claim.personId === identity.personId
                 );
@@ -326,7 +400,7 @@ export default function VotePage() {
             me?.isDoneVoting ? "border border-accent bg-white text-accent" : "bg-accent text-white"
           }`}
         >
-          {me?.isDoneVoting ? "I'm done voting ✓ (tap to edit)" : "I'm done voting"}
+          {pendingDone ? "Saving…" : "See split"}
         </button>
       </div>
 

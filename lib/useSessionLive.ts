@@ -8,6 +8,7 @@ import {
 } from "firebase/firestore";
 import { db, ensureAnonymousAuth } from "./firebase";
 import type { Claim, Item, Person, Session, SessionStatus } from "./types";
+import { isItemCategory } from "./itemCategory";
 
 function num(v: unknown, fallback = 0) {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -64,6 +65,7 @@ export function useSessionLive(sessionId: string) {
           name: String(d.data().name ?? ""),
           price: num(d.data().price),
           quantity: d.data().quantity == null ? undefined : num(d.data().quantity),
+          category: isItemCategory(d.data().category) ? d.data().category : "other",
         })));
       });
 
