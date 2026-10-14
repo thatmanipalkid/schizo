@@ -166,8 +166,10 @@ export async function deleteItemAndClaims(sessionId: string, itemId: string) {
 
 export async function reopenSession(sessionId: string) {
   const claims = await getDocs(collection(db, "sessions", sessionId, "claims"));
+  const people = await getDocs(collection(db, "sessions", sessionId, "people"));
   const batch = writeBatch(db);
   claims.docs.forEach((claim) => batch.delete(claim.ref));
+  people.docs.forEach((person) => batch.update(person.ref, { isDoneVoting: false }));
   batch.update(doc(db, "sessions", sessionId), { status: "draft" });
   await batch.commit();
 }
